@@ -1,0 +1,401 @@
+{
+  "probed_at_utc": "2026-09-28T11:12:39.105823+00:00",
+  "note": "All probes ran through app.nepse (paced adapter), not raw requests.",
+  "security_master": {
+    "rows": 568,
+    "nabil_id": 131
+  },
+  "security_detail__promoter_public_split": {
+    "ok": true,
+    "type": "dict",
+    "keys": [
+      "issuedCapital",
+      "marketCapitalization",
+      "paidUpCapital",
+      "promoterPercentage",
+      "promoterShares",
+      "publicPercentage",
+      "publicShares",
+      "security",
+      "securityDailyTradeDto",
+      "securityId",
+      "stockListedShares",
+      "updatedDate"
+    ]
+  },
+  "corporate_actions__dividend_bonus_bookclose_agm": {
+    "ok": true,
+    "type": "list",
+    "count": 5,
+    "first_row_keys": [
+      "activeStatus",
+      "authorizationComments",
+      "bonusPercentage",
+      "cashDividend",
+      "documentId",
+      "filePath",
+      "fiscalYear",
+      "ratioDen",
+      "ratioNum",
+      "rightAmountPerShare",
+      "rightPercentage",
+      "sdId",
+      "submittedDate"
+    ],
+    "first_row": {
+      "activeStatus": "BONUS_APPROVED",
+      "authorizationComments": "None",
+      "submittedDate": "2023-01-01T16:44:36.527",
+      "filePath": "",
+      "documentId": "1",
+      "ratioNum": "185000",
+      "ratioDen": "1000000",
+      "cashDividend": "None",
+      "fiscalYear": "2079-2080",
+      "rightAmountPerShare": "None",
+      "bonusPercentage": "18.5",
+      "rightPercentage": "None",
+      "sdId": "539"
+    }
+  },
+  "legacy_application_dividend": {
+    "ok": true,
+    "type": "list",
+    "count": 6,
+    "first_row_keys": [
+      "activeStatus",
+      "applicationDocumentDetailsList",
+      "applicationStatus",
+      "applicationType",
+      "companyNews",
+      "fiscalReport",
+      "id"
+    ],
+    "first_row": {
+      "id": "47328",
+      "activeStatus": "A",
+      "applicationType": "39",
+      "applicationStatus": "3",
+      "companyNews": {
+        "id": "70585",
+        "activeStatus": "A",
+        "newsSource": "Letter",
+        "newsHeadline": "Declaration of Dividend-Nabil Bank [NABIL] ",
+        "newsBody": "Dividend Declaration of NABIL\nFiscal Year: 2082-2083\nCash Dividend: 10.8%\nBonus Shares: 5%",
+        "newsType": "Dividend Declaration",
+        "security": {
+          "id": "131",
+          "symbol": "NABIL",
+          "isin": "NPE025A00004",
+          "permittedToTrade": "Y",
+          "listingDate": "1985-11-24",
+          "creditRating": "None",
+          "tickSize": "0.1",
+          "instrumentType": {
+            "id": "1",
+            "code": "EQ",
+            "description": "Equity",
+            "activeStatus": "A"
+          },
+          "capitalGainBaseDate": "2006-12-29",
+          "faceValue": "100.0",
+          "highRangeDPR": "None",
+          "issuerName": "None",
+          "meInstanceNumber": "1",
+          "parentId": "None",
+          "recordType": "1",
+          "schemeDescription": "None",
+          "schemeName": "None",
+          "secured": "None",
+          "series": "None",
+          "shareGroupId": {
+            "id": "37",
+            "name": "A",
+            "description": "Minimum Paid up Capital-1000000000.Listing for last 3 years.From last 3 years on profit.Credit Rating more than average.Conducted Annual Meeting within 6 month of running fiscal year",
+            "capitalRangeMin": "1000000000",
+            "activeStatus": "A",
+            "isDefault": "N"
+          },
+          "activeStatus": "A",
+          "divisor": "100",
+          "cdsStockRefId": "102",
+          "securityName": "Nabil Bank Limited"
+        },
+        "boardMeetingDate": "None",
+        "expiryDate": "2026-09-08",
+        "oldNewsReference": "None",
+        "publishToWebsite": "True",
+        "remarks": "None",
+        "dividendsNotice": {
+          "id": "2825",
+          "activeStatus": "A",
+          "financialYear": {
+            "id": "41",
+            "activeStatus": "A",
+            "fyName": "2025-2026",
+            "fromYear": "2025-07-17",
+            "toYear": "2026-07-16",
+            "fyNameNepali": "2082-2083"
+          },
+          "cashDividend": "10.8",
+          "bonusShare": "5.0",
+          "rightShare": "0.0",
+          "remarks": "None"
+        },
+        "bookCloseNotice": "None",
+        "agmNotice": "None",
+        "addedDate": "2026-09-06T14:02:26.493"
+      },
+      "fiscalReport": "None",
+      "applicationDocumentDetailsList": [
+        {
+          "id": "32690",
+          "activeStatus": "A",
+          "application": "47328",
+          "documentType": "54",
+          "submittedDate": "2026-09-06",
+          "filePath": "nabil_user/2026-09-06/Nabil Bank Limited -Dividend Declaration_1788682541081.pdf",
+          "encryptedId": "42294837fd83d70e66a9f6bc31f15718954d0b059c98aada5490345e0bb550f467e0c76a67be59b2ec701121e2040edebe3aa61e3a675e9c3051f318ab875d8e"
+        }
+      ]
+    }
+  },
+  "legacy_application_agm": {
+    "ok": true,
+    "type": "list",
+    "count": 7,
+    "first_row_keys": [
+      "activeStatus",
+      "applicationDocumentDetailsList",
+      "applicationStatus",
+      "applicationType",
+      "companyNews",
+      "fiscalReport",
+      "id"
+    ],
+    "first_row": {
+      "id": "47451",
+      "activeStatus": "A",
+      "applicationType": "39",
+      "applicationStatus": "3",
+      "companyNews": {
+        "id": "70675",
+        "activeStatus": "A",
+        "newsSource": "Letter/Newspaper",
+        "newsHeadline": "Notice Regarding 42nd AGM of Nabil Bank Limited [NABIL] ",
+        "newsBody": "Annual General Meeting of NABIL\nFiscal Year: 2082-2083\nAGM Type: AGM\nAGM Date: 08/10/2026\nAGM No: 42\nBook Close Date: 30/09/2026\nCash Dividend: 10.8%\nBonus Shares: 5%",
+        "newsType": "Annual General Meeting",
+        "security": {
+          "id": "131",
+          "symbol": "NABIL",
+          "isin": "NPE025A00004",
+          "permittedToTrade": "Y",
+          "listingDate": "1985-11-24",
+          "creditRating": "None",
+          "tickSize": "0.1",
+          "instrumentType": {
+            "id": "1",
+            "code": "EQ",
+            "description": "Equity",
+            "activeStatus": "A"
+          },
+          "capitalGainBaseDate": "2006-12-29",
+          "faceValue": "100.0",
+          "highRangeDPR": "None",
+          "issuerName": "None",
+          "meInstanceNumber": "1",
+          "parentId": "None",
+          "recordType": "1",
+          "schemeDescription": "None",
+          "schemeName": "None",
+          "secured": "None",
+          "series": "None",
+          "shareGroupId": {
+            "id": "37",
+            "name": "A",
+            "description": "Minimum Paid up Capital-1000000000.Listing for last 3 years.From last 3 years on profit.Credit Rating more than average.Conducted Annual Meeting within 6 month of running fiscal year",
+            "capitalRangeMin": "1000000000",
+            "activeStatus": "A",
+            "isDefault": "N"
+          },
+          "activeStatus": "A",
+          "divisor": "100",
+          "cdsStockRefId": "102",
+          "securityName": "Nabil Bank Limited"
+        },
+        "boardMeetingDate": "None",
+        "expiryDate": "2026-09-17",
+        "oldNewsReference": "None",
+        "publishToWebsite": "True",
+        "remarks": "None",
+        "dividendsNotice": "None",
+        "bookCloseNotice": "None",
+        "agmNotice": {
+          "id": "2512",
+          "activeStatus": "A",
+          "agmType": "AGM",
+          "agmDate": "2026-10-08",
+          "agmNo": "42",
+          "bookCloseDate": "2026-09-30",
+          "cashDividend": "10.8",
+          "bonusShare": "5.0",
+          "agenda": "As published in Notice",
+          "venue": "Tribhuvan Army Officers Club, Bhadrakali, Kathmandu",
+          "remarks": "None"
+        },
+        "addedDate": "2026-09-16T10:14:57.5"
+      },
+      "fiscalReport": "None",
+      "applicationDocumentDetailsList": [
+        {
+          "id": "32810",
+          "activeStatus": "A",
+          "application": "47451",
+          "documentType": "54",
+          "submittedDate": "2026-09-16",
+          "filePath": "nabil_user/2026-09-16/Information regarding 42nd AGM Notice and Book Close_1789532953708.pdf",
+          "encryptedId": "4cf8a9625b4e30e8dd607cf28e5318748f9bb70be7e282548bbee36d5100c1fca3e1c587ef762e0b0c4f341c4553f5f2b9f675e6ca18ec2934cffae191377973"
+        }
+      ]
+    }
+  },
+  "company_news": {
+    "ok": true,
+    "type": "list",
+    "count": 39,
+    "first_row_keys": [
+      "activeStatus",
+      "applicationDocumentDetailsList",
+      "applicationStatus",
+      "applicationType",
+      "companyNews",
+      "fiscalReport",
+      "id"
+    ],
+    "first_row": {
+      "id": "44595",
+      "activeStatus": "A",
+      "applicationType": "39",
+      "applicationStatus": "3",
+      "companyNews": {
+        "id": "69679",
+        "activeStatus": "A",
+        "newsSource": "Letter",
+        "newsHeadline": "Minutes of 41st Annual General Meeting of Nabil Bank [NABIL] ",
+        "newsBody": "<p>Minutes of 41st Annual General Meeting of Nabil Bank</p>",
+        "newsType": "Others",
+        "security": {
+          "id": "131",
+          "symbol": "NABIL",
+          "isin": "NPE025A00004",
+          "permittedToTrade": "Y",
+          "listingDate": "1985-11-24",
+          "creditRating": "None",
+          "tickSize": "0.1",
+          "instrumentType": {
+            "id": "1",
+            "code": "EQ",
+            "description": "Equity",
+            "activeStatus": "A"
+          },
+          "capitalGainBaseDate": "2006-12-29",
+          "faceValue": "100.0",
+          "highRangeDPR": "None",
+          "issuerName": "None",
+          "meInstanceNumber": "1",
+          "parentId": "None",
+          "recordType": "1",
+          "schemeDescription": "None",
+          "schemeName": "None",
+          "secured": "None",
+          "series": "None",
+          "shareGroupId": {
+            "id": "37",
+            "name": "A",
+            "description": "Minimum Paid up Capital-1000000000.Listing for last 3 years.From last 3 years on profit.Credit Rating more than average.Conducted Annual Meeting within 6 month of running fiscal year",
+            "capitalRangeMin": "1000000000",
+            "activeStatus": "A",
+            "isDefault": "N"
+          },
+          "activeStatus": "A",
+          "divisor": "100",
+          "cdsStockRefId": "102",
+          "securityName": "Nabil Bank Limited"
+        },
+        "boardMeetingDate": "None",
+        "expiryDate": "2026-02-11",
+        "oldNewsReference": "None",
+        "publishToWebsite": "True",
+        "remarks": "None",
+        "dividendsNotice": "None",
+        "bookCloseNotice": "None",
+        "agmNotice": "None",
+        "addedDate": "2026-02-09T17:54:01.66"
+      },
+      "fiscalReport": "None",
+      "applicationDocumentDetailsList": [
+        {
+          "id": "29716",
+          "activeStatus": "A",
+          "application": "44595",
+          "documentType": "54",
+          "submittedDate": "2026-02-09",
+          "filePath": "nabil_user/2026-02-09/Minutes of 41st Annual General Meeting of Nabil Bank_1770638853219.pdf",
+          "encryptedId": "3dc35681f557a9de99980c59766682ee84b0bd91722f126e09a5086afbd331ad1d53285897cc017f4ad09f66624925c5f8ed2b9ff7ed24276c050b37718286e9"
+        }
+      ]
+    }
+  },
+  "market_news_and_alerts": {
+    "ok": true,
+    "type": "list",
+    "count": 1737,
+    "first_row_keys": [
+      "addedDate",
+      "approvedDate",
+      "encryptedId",
+      "expiryDate",
+      "filePath",
+      "id",
+      "messageBody",
+      "messageTitle",
+      "remarks"
+    ],
+    "first_row": {
+      "id": "208806",
+      "messageBody": "<p><span style=\"box-sizing: border-box; color: rgb(47, 47, 47); font-family: &quot;Source Sans Pro&quot;, sans-serif; font-size: 14px; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; font-weight: 400; letter-spacing: normal; orphans: 2; text-align: left; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(255, 255, 255); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial;\">Adjusted price of&nbsp;</span>Shine Resunga Developm\u2026",
+      "messageTitle": "Price Adjusted - Shine Resunga Development Bank Ltd. (SHINE)",
+      "encryptedId": "None",
+      "expiryDate": "2026-09-28",
+      "filePath": "None",
+      "remarks": "",
+      "addedDate": "2026-09-28T15:31:39.923",
+      "approvedDate": "2026-09-28T16:02:18.61"
+    }
+  },
+  "market_depth": {
+    "ok": false,
+    "error_class": "NepseInvalidResponseError",
+    "error": ""
+  },
+  "adjusted_history__graphdata": {
+    "ok": false,
+    "error_class": "NepseInvalidResponseError",
+    "error": ""
+  },
+  "adjusted_history__daywiseadjprice_symbol": {
+    "ok": false,
+    "error_class": "NepseInvalidResponseError",
+    "error": ""
+  },
+  "adjusted_history__daywiseadjprice_id": {
+    "ok": false,
+    "error_class": "NepseInvalidResponseError",
+    "error": ""
+  },
+  "adjusted_history__nepse_data_daywiseadjprice": {
+    "ok": false,
+    "error_class": "NepseInvalidResponseError",
+    "error": ""
+  }
+}

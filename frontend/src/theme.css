@@ -1,0 +1,177 @@
+/* Design tokens.
+ *
+ * One scale for space, one for radius, one for type. Colours are declared as
+ * semantic roles (surface, text, border, accent, up/down) rather than raw hues,
+ * so the light and dark themes stay in step and a component never hardcodes a
+ * colour.
+ *
+ * Nepal's market convention is red for up and green for down, which is the
+ * opposite of Western markets. `color-scheme: light dark` lets the browser
+ * render native controls to match.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* -- type ------------------------------------------------------------ */
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono",
+    monospace;
+
+  --text-2xs: 0.6875rem; /* 11px - table micro-labels, status chips */
+  --text-xs: 0.75rem; /* 12px - captions, axis labels */
+  --text-sm: 0.8125rem; /* 13px - dense table cells */
+  --text-base: 0.875rem; /* 14px - body */
+  --text-md: 1rem; /* 16px - card titles */
+  --text-lg: 1.25rem; /* 20px - page titles */
+  --text-xl: 1.75rem; /* 28px - hero numerals */
+  --text-2xl: 2.5rem; /* 40px - index value */
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* -- space (4px base) ------------------------------------------------ */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* -- radius ---------------------------------------------------------- */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* -- layout ---------------------------------------------------------- */
+  --sidebar-w: 232px;
+  --header-h: 56px;
+  --content-max: 1440px;
+
+  /* -- motion ---------------------------------------------------------- */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+
+  /* -- semantic colours: light ------------------------------------------ */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e6e9ee;
+  --overlay: rgb(15 23 42 / 45%);
+
+  --text: #111827;
+  --text-muted: #5b6472;
+  --text-subtle: #8a929f;
+  --text-inverse: #ffffff;
+
+  --border: #dfe3e9;
+  --border-strong: #c4cad3;
+
+  --accent: #1f5fbf;
+  --accent-hover: #1a51a3;
+  --accent-soft: #e8f0fd;
+  --accent-text: #ffffff;
+
+  /* NEPSE convention: red is up, green is down. */
+  --up: #c62828;
+  --up-soft: #fdeaea;
+  --down: #1b7f4b;
+  --down-soft: #e6f4ec;
+  --flat: #5b6472;
+  --flat-soft: #eef0f3;
+
+  --warn: #8a5a00;
+  --warn-soft: #fdf3e0;
+  --danger: #b3261e;
+  --danger-soft: #fdecea;
+  --ok: #1b7f4b;
+  --ok-soft: #e6f4ec;
+  --info: #1f5fbf;
+  --info-soft: #e8f0fd;
+
+  /* Status colours for provenance chips. */
+  --st-ok: #1b7f4b;
+  --st-ok-bg: #e6f4ec;
+  --st-zero: #8a5a00;
+  --st-zero-bg: #fdf3e0;
+  --st-missing: #8a929f;
+  --st-missing-bg: #eef0f3;
+  --st-warn: #b3261e;
+  --st-warn-bg: #fdecea;
+
+  --select-arrow: #1f5fbf;
+
+  --shadow-xs: 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-sm: 0 1px 3px rgb(16 24 40 / 10%), 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-md: 0 4px 8px -2px rgb(16 24 40 / 10%), 0 2px 4px -2px rgb(16 24 40 / 6%);
+  --shadow-lg: 0 12px 16px -4px rgb(16 24 40 / 8%), 0 4px 6px -2px rgb(16 24 40 / 4%);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+
+/* -- semantic colours: dark --------------------------------------------- */
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #1c232c;
+  --surface-3: #262d38;
+  --overlay: rgb(0 0 0 / 60%);
+
+  --text: #e6edf3;
+  --text-muted: #9aa4b2;
+  --text-subtle: #6e7781;
+  --text-inverse: #0d1117;
+
+  --border: #262d38;
+  --border-strong: #3d444d;
+
+  --accent: #4d8ef7;
+  --accent-hover: #6ba1ff;
+  --accent-soft: #16243c;
+  --accent-text: #0d1117;
+
+  --up: #ff6b6b;
+  --up-soft: #2d1618;
+  --down: #3fbf7f;
+  --down-soft: #12251b;
+  --flat: #9aa4b2;
+  --flat-soft: #1c232c;
+
+  --warn: #e0a33a;
+  --warn-soft: #2a2113;
+  --danger: #ff7b72;
+  --danger-soft: #2d1618;
+  --ok: #3fbf7f;
+  --ok-soft: #12251b;
+  --info: #4d8ef7;
+  --info-soft: #16243c;
+
+  --st-ok: #3fbf7f;
+  --st-ok-bg: #12251b;
+  --st-zero: #e0a33a;
+  --st-zero-bg: #2a2113;
+  --st-missing: #6e7781;
+  --st-missing-bg: #1c232c;
+  --st-warn: #ff7b72;
+  --st-warn-bg: #2d1618;
+
+  --select-arrow: #4d8ef7;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 40%);
+  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 12px 16px -4px rgb(0 0 0 / 50%);
+}

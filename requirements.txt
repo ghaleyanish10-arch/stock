@@ -1,0 +1,33 @@
+# Direct dependencies, pinned to the versions this was built and tested against.
+#
+# Anything not listed here is pulled in transitively by these. `cachetools` and
+# `python-dotenv` are used directly by app code, so they are pinned rather than
+# left to chance.
+
+# Web layer
+fastapi==0.141.1
+starlette==1.7.0
+uvicorn[standard]==0.54.0
+anyio==4.15.1
+pydantic==2.13.5
+
+# NEPSE data source
+nepse-data-api==1.0.0.4
+
+# Storage
+SQLAlchemy==2.1.1
+aiosqlite==0.22.1
+greenlet==3.5.6
+
+# Auth
+PyJWT==2.15.0
+
+# Used directly by app code
+cachetools==4.2.4
+python-dotenv==1.2.3
+requests==2.34.2
+
+# Dev / test
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1

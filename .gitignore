@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Environment / secrets
+.env
+
+# Tooling / caches
+.pytest_cache/
+.freebuff/
+
+# Local application data (SQLite archive - never publish market data dumps)
+data/
+
+# Logs
+*.log
+
+# Node / frontend
+node_modules/
+dist/
+*.local
+
+# OS junk
+Thumbs.db
+.DS_Store
