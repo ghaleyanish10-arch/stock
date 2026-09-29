@@ -66,20 +66,30 @@ Archive and reference data are persisted (SQLAlchemy, SQLite by default),
 which is what makes the app accumulate history beyond NEPSE's ~227-session
 window.
 
+## Repository layout
+
+```
+backend/    FastAPI service: app/, tests/, scripts/, pytest.ini,
+            requirements.txt, .env.example; the SQLite archive lives
+            in backend/data/ (created on first run, never committed)
+frontend/   React 19 + TypeScript + Vite dashboard
+docs/       setup, data-source audit, API reference
+```
+
 ## Installation
 
 Windows (PowerShell), from the project root:
 
 ```bash
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -r backend\requirements.txt
 ```
 
 Linux/macOS:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r backend/requirements.txt
 ```
 
 ## Frontend (React dashboard)
@@ -123,9 +133,10 @@ administrator through a local CLI, so privilege escalation never has an HTTP
 surface:
 
 ```bash
-.venv\Scripts\python -m app.cli create-admin --email you@example.com
-.venv\Scripts\python -m app.cli grant-admin --email someone@example.com
-.venv\Scripts\python -m app.cli list-users
+cd backend
+..\.venv\Scripts\python -m app.cli create-admin --email you@example.com
+..\.venv\Scripts\python -m app.cli grant-admin --email someone@example.com
+..\.venv\Scripts\python -m app.cli list-users
 ```
 
 Full setup, configuration and deployment notes: [`docs/setup.md`](docs/setup.md).
@@ -150,9 +161,10 @@ scrambled-token authentication internally.)
 ## Running the service
 
 ```bash
-.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd backend
+..\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 # or
-.venv\Scripts\python -m app.main
+..\.venv\Scripts\python -m app.main
 ```
 
 Interactive API docs: `http://127.0.0.1:8000/docs`
@@ -388,7 +400,8 @@ Fields a given source does not provide are `null` rather than invented.
 ## Testing
 
 ```bash
-.venv\Scripts\python -m pytest -q
+cd backend
+..\.venv\Scripts\python -m pytest -q
 ```
 
 243 tests, all with the library mocked - no real NEPSE requests are made in
@@ -408,7 +421,8 @@ npm run build        # tsc -b && vite build; the type check is the real gate
 Live end-to-end check against NEPSE, writing a report of what was fetched:
 
 ```bash
-.venv\Scripts\python scripts\phase1_e2e.py
+cd backend
+..\.venv\Scripts\python scripts\phase1_e2e.py
 ```
 
 ## Limitations

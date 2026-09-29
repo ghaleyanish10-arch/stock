@@ -10,9 +10,10 @@
 ## Install
 
 ```powershell
+# backend (Python package lives in backend/)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r backend\requirements.txt
 
 cd frontend
 npm install
@@ -25,7 +26,8 @@ origin, so the app runs as a single process.
 ## Run
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd backend
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Open http://127.0.0.1:8000. API docs are at `/docs`.
@@ -40,14 +42,15 @@ create one. This is a local CLI, not an endpoint, which keeps privilege
 escalation off the HTTP surface entirely.
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.cli create-admin --email you@example.com
+# from backend/
+..\.venv\Scripts\python.exe -m app.cli create-admin --email you@example.com
 ```
 
 The password is prompted without echo. Other commands:
 
 ```powershell
-.\.venv\Scripts\python.exe -m app.cli grant-admin --email someone@example.com
-.\.venv\Scripts\python.exe -m app.cli list-users
+..\.venv\Scripts\python.exe -m app.cli grant-admin --email someone@example.com
+..\.venv\Scripts\python.exe -m app.cli list-users
 ```
 
 `grant-admin` bumps the account's token version, so sessions issued before the

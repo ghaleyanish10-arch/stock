@@ -47,7 +47,8 @@ from app.news import routes as news_routes
 
 logger = logging.getLogger(__name__)
 
-FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
+# The repo root sits two levels above this package (repo/backend/app/main.py).
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 @asynccontextmanager
