@@ -21,6 +21,7 @@ data/
 node_modules/
 dist/
 *.local
+*.tsbuildinfo
 
 # OS junk
 Thumbs.db
