@@ -77,11 +77,15 @@ export function CommandPalette({
     }
 
     const rows = securities?.securities ?? [];
+    // Word-based matching: "prabhu bank" must hit "Prabhu Bank Limited"
+    // regardless of order; every word has to appear in the symbol or name.
+    const words = needle.split(/\s+/).filter(Boolean);
+    const hasAll = (hay: string) => words.every((w) => hay.includes(w));
     for (const s of rows) {
-      const name = s.name ?? "";
-      if (needle) {
-        const match = s.symbol.toLowerCase().includes(needle) || name.toLowerCase().includes(needle);
-        if (!match) continue;
+      const name = (s.name ?? "").toLowerCase();
+      const sym = s.symbol.toLowerCase();
+      if (words.length) {
+        if (!hasAll(sym) && !hasAll(name)) continue;
       } else {
         // With no query, offering 568 symbols would bury the navigation.
         break;
@@ -89,8 +93,8 @@ export function CommandPalette({
       out.push({
         id: `sym:${s.symbol}`,
         label: s.symbol,
-        hint: name || "Security",
-        run: () => navigate(`/chart/${s.symbol}`),
+        hint: (s.name ?? "") || "Security",
+        run: () => navigate(`/analytics?symbol=${encodeURIComponent(s.symbol)}`),
       });
     }
     return out.slice(0, 40);

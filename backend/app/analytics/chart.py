@@ -16,7 +16,7 @@ ex-dates this is the single place that has to change.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,27 +26,61 @@ from app.analytics.indicators import (
     accumulation_distribution_line,
     adx,
     aroon,
+    atr,
+    awesome_oscillator,
     bollinger,
+    bollinger_on_valid,
+    camarilla_pivots,
     chaikin_money_flow,
+    chaikin_oscillator,
+    chaikin_volatility,
+    cci,
+    cumulative_volume_delta,
     dema,
+    demark_pivots,
+    donchian,
+    ease_of_movement,
     ema,
+    ema_on_valid,
+    fibonacci_extension,
+    fibonacci_fan,
+    fibonacci_retracement,
+    force_index,
+    historical_volatility,
     hma,
     ichimoku,
+    keltner,
+    klinger_oscillator,
     macd,
+    macd_on_valid,
     money_flow_index,
+    momentum,
     obv,
+    pivot_points,
     psar,
-    roc,
     rsi,
-    supertrend,
-    vortex,
+    rsi_on_valid,
     sma,
+    sma_on_valid,
+    stochastic,
+    stoch_rsi,
+    stdev_series,
+    supertrend,
     tema,
+    tsi,
     trix,
+    ultimate_oscillator,
+    volume_price_trend,
+    volume_profile,
+    volume_oscillator,
     vwap_series,
+    vwma,
+    williams_r,
     wma,
+    rvi,
     Bar,
 )
+from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
 from app.auth.deps import DbSession
 from app.db.models import DailyBar, Security
@@ -76,6 +110,49 @@ PERFORMANCE_GRID: list[tuple[str, int]] = [
     ("6M", 183),
     ("1Y", 366),
 ]
+
+
+def _live_bar(sym: str, dates: list[str]) -> Optional[Bar]:
+    """Today's live session as a synthetic bar, from the shared poller cache.
+
+    The nightly ingest only adds a bar after NEPSE publishes the EOD file, so
+    between market open and the evening backfill the archived series ends
+    yesterday - and every indicator computed on it is a day stale. The
+    realtime poller's cache (one upstream NEPSE poll per 30s, fan-out to all
+    readers) carries today's LTP/high/low/volume, so we append it as the last
+    bar BEFORE computing: every indicator then includes the live session.
+
+    Rules:
+    * Only appended when today is not already archived (no duplicates).
+    * `open` uses the day reference (LTP - change) and `close` the LTP, so
+      the candle renders like any other bar.
+    * Zero volume (pre-open feed) yields a bar with volume None rather than a
+      fake 0, and the bar is skipped entirely when LTP is unusable.
+    * Returns None when the poller has no fresh quote - indicators then
+      compute on archived data only, exactly as before.
+    """
+    try:
+        quote = get_realtime_service().get_cached_price(sym)
+    except Exception:
+        # A poller outage must never take the chart down.
+        return None
+    if quote is None:
+        return None
+    today = datetime.now().strftime("%Y-%m-%d")
+    if dates and today <= dates[-1]:
+        return None  # already archived (or clock ahead of the data)
+    if quote.ltp is None or quote.ltp <= 0:
+        return None
+    ref = quote.ltp - quote.change if quote.change else quote.ltp
+    vol = float(quote.volume) if quote.volume else None
+    return Bar(
+        date=today,
+        open=ref,
+        high=max(quote.high, quote.ltp, ref),
+        low=min(quote.low if quote.low and quote.low > 0 else quote.ltp, quote.ltp, ref),
+        close=quote.ltp,
+        volume=vol,
+    )
 
 
 def _range_first(dates: list[str], latest: str, days: int) -> str:
@@ -134,6 +211,56 @@ async def chart(
     volumes = [float(r.volume) if r.volume is not None else None for r in rows]
     latest = dates[-1]
 
+    # -- live session merge -------------------------------------------------
+    # Today's quote from the shared poller becomes a synthetic bar appended
+    # before any computation, so every indicator below is live-aware. When
+    # there is no fresh quote the series is untouched and `live` says so.
+    live_quote = None
+    try:
+        q = get_realtime_service().get_cached_price(sym)
+        live_quote = (
+            {
+                "ltp": q.ltp,
+                "change": q.change,
+                "change_pct": q.change_pct,
+                "volume": q.volume,
+                "timestamp": q.timestamp.isoformat(),
+            }
+            if q is not None
+            else None
+        )
+    except Exception:
+        live_quote = None
+    live_bar = _live_bar(sym, dates)
+    live_mode: Optional[str] = None
+    if live_bar is not None:
+        dates = dates + [live_bar.date]
+        opens = opens + [live_bar.open]
+        highs = highs + [live_bar.high]
+        lows = lows + [live_bar.low]
+        closes = closes + [live_bar.close]
+        volumes = volumes + [live_bar.volume]
+        latest = live_bar.date
+        live_mode = "appended"
+    elif live_quote is not None and dates and dates[-1] == datetime.now().strftime("%Y-%m-%d"):
+        # Today's row is archived but the close may not be published yet (the
+        # ingest runs after NEPSE's EOD file). Overlay the live session onto
+        # that bar so the indicators still carry the live session; when the
+        # close already exists the bar is complete and left untouched.
+        i = len(dates) - 1
+        if closes[i] is None:
+            q_ltp = float(live_quote["ltp"])
+            q_chg = float(live_quote["change"] or 0.0)
+            q_vol = live_quote["volume"]
+            closes[i] = q_ltp
+            opens[i] = opens[i] if opens[i] is not None else (q_ltp - q_chg if q_chg else q_ltp)
+            hi = float(highs[i]) if highs[i] is not None else q_ltp
+            lo = float(lows[i]) if lows[i] is not None else q_ltp
+            highs[i] = max(hi, q_ltp)
+            lows[i] = min(lo, q_ltp)
+            volumes[i] = float(q_vol) if q_vol else volumes[i]
+            live_mode = "overlay"
+
     # -- range windowing, with an honest "not fully covered" ----------------
     want = (date.fromisoformat(latest) - timedelta(days=RANGE_DAYS[range_key])).isoformat()
     start_idx = next((i for i, d in enumerate(dates) if d >= want), None)
@@ -175,10 +302,11 @@ async def chart(
     wanted = {k.strip() for k in indicators.split(",") if k.strip()} - {"none", ""}
     out_indicators: dict[str, list[Optional[float]]] = {}
     w_closes = window["close"]
+    dates_w = window["dates"]
     if "sma_20" in wanted:
-        out_indicators["sma_20"] = sma(w_closes, 20)
+        out_indicators["sma_20"] = sma_on_valid(w_closes, 20)
     if "ema_20" in wanted:
-        out_indicators["ema_20"] = ema(w_closes, 20)
+        out_indicators["ema_20"] = ema_on_valid(w_closes, 20)
     if "wma_20" in wanted:
         out_indicators["wma_20"] = wma(w_closes, 20)
     if "hma_16" in wanted:
@@ -215,14 +343,14 @@ async def chart(
         out_indicators["ichimoku_senkou_b"] = senkou_b
         out_indicators["ichimoku_chikou"] = chikou
     if "rsi_14" in wanted:
-        out_indicators["rsi_14"] = rsi(w_closes, 14)
+        out_indicators["rsi_14"] = rsi_on_valid(w_closes, 14)
     if "macd" in wanted:
-        line, sig, hist = macd(w_closes)
+        line, sig, hist = macd_on_valid(w_closes)
         out_indicators["macd"] = line
         out_indicators["macd_signal"] = sig
         out_indicators["macd_histogram"] = hist
     if "bb" in wanted:
-        mid, up, lo, bw, pctb = bollinger(w_closes, 20, 2.0)
+        mid, up, lo, bw, pctb = bollinger_on_valid(w_closes, 20, 2.0)
         out_indicators["bb_upper"] = up
         out_indicators["bb_middle"] = mid
         out_indicators["bb_lower"] = lo
@@ -237,6 +365,88 @@ async def chart(
         out_indicators["money_flow_index_14"] = money_flow_index(bars, 14)
     if "roc" in wanted:
         out_indicators["roc_1"] = roc(w_closes, 1)
+    if "atr" in wanted:
+        out_indicators["atr_14"] = atr(bars, 14)
+    if "stoch" in wanted:
+        k_line, d_line = stochastic(bars, 14, 3)
+        out_indicators["stoch_k"] = k_line
+        out_indicators["stoch_d"] = d_line
+    if "stoch_rsi" in wanted:
+        out_indicators["stoch_rsi"] = stoch_rsi(w_closes, 14, 14)
+    if "cci" in wanted:
+        out_indicators["cci_20"] = cci(bars, 20)
+    if "williams_r" in wanted:
+        out_indicators["williams_r_14"] = williams_r(bars, 14)
+    if "momentum" in wanted:
+        out_indicators["momentum_10"] = momentum(w_closes, 10)
+    if "ultimate_osc" in wanted:
+        out_indicators["ultimate_osc"] = ultimate_oscillator(bars, 7, 14, 28)
+    if "awesome_osc" in wanted:
+        out_indicators["awesome_osc"] = awesome_oscillator(bars, 5, 34)
+    if "tsi" in wanted:
+        out_indicators["tsi"] = tsi(w_closes, 25, 13)
+    if "rvi" in wanted:
+        rvi_line, rvi_sig = rvi(bars)
+        out_indicators["rvi"] = rvi_line
+        out_indicators["rvi_signal"] = rvi_sig
+    if "stdev" in wanted:
+        out_indicators["stdev_20"] = stdev_series(w_closes, 20)
+    if "keltner" in wanted:
+        k_mid, k_up, k_lo = keltner(bars, 20, 2.0, 10)
+        out_indicators["keltner_upper"] = k_up
+        out_indicators["keltner_middle"] = k_mid
+        out_indicators["keltner_lower"] = k_lo
+    if "donchian" in wanted:
+        d_up, d_lo, d_mid = donchian(bars, 20)
+        out_indicators["donchian_upper"] = d_up
+        out_indicators["donchian_lower"] = d_lo
+        out_indicators["donchian_middle"] = d_mid
+    if "historical_vol" in wanted:
+        out_indicators["historical_vol_20"] = historical_volatility(w_closes, 20, 252)
+    if "chaikin_vol" in wanted:
+        out_indicators["chaikin_volatility"] = chaikin_volatility(bars, 10, 10)
+    if "vpt" in wanted:
+        out_indicators["vpt"] = volume_price_trend(bars)
+    if "emv" in wanted:
+        out_indicators["emv_14"] = ease_of_movement(bars, 14)
+    if "force_index" in wanted:
+        out_indicators["force_index_13"] = force_index(bars, 13)
+    if "volume_osc" in wanted:
+        out_indicators["volume_osc"] = volume_oscillator(bars, 5, 20)
+    if "klinger" in wanted:
+        out_indicators["klinger"] = klinger_oscillator(bars, 34, 55)
+    if "chaikin_osc" in wanted:
+        out_indicators["chaikin_osc"] = chaikin_oscillator(bars, 3, 10)
+    if "vwma" in wanted:
+        out_indicators["vwma_20"] = vwma(w_closes, window["volume"], 20)
+    if "cvd" in wanted:
+        out_indicators["cvd"] = cumulative_volume_delta(bars)
+    if "pivots" in wanted:
+        for key, series_ in pivot_points(bars).items():
+            out_indicators[f"pivot_{key}"] = series_
+    if "camarilla" in wanted:
+        for key, series_ in camarilla_pivots(bars).items():
+            out_indicators[f"cam_{key}"] = series_
+    if "woodie" in wanted:
+        for key, series_ in woodie_pivots(bars).items():
+            out_indicators[f"wpiv_{key}"] = series_
+    if "demark" in wanted:
+        for key, series_ in demark_pivots(bars).items():
+            out_indicators[f"dpiv_{key}"] = series_
+    if "fib_retrace" in wanted:
+        for key, series_ in fibonacci_retracement(bars).items():
+            out_indicators[key] = series_
+    if "fib_extension" in wanted:
+        for key, series_ in fibonacci_extension(bars).items():
+            out_indicators[key] = series_
+    if "fib_fan" in wanted:
+        for key, series_ in fibonacci_fan(bars).items():
+            out_indicators[key] = series_
+    if "volume_profile" in wanted:
+        vp = volume_profile(bars, 24, 70.0)
+        out_indicators["vp_poc"] = [vp["poc"]] * len(dates_w)
+        out_indicators["vp_va_high"] = [vp["va_high"]] * len(dates_w)
+        out_indicators["vp_va_low"] = [vp["va_low"]] * len(dates_w)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
@@ -305,6 +515,23 @@ async def chart(
         "as_of": latest,
         "series": window,
         "indicators": out_indicators,
+        "live": {
+            "merged": live_mode is not None,
+            "mode": live_mode,
+            "quote": live_quote,
+            "note": (
+                "Today's session from the live poller is included as the last bar, "
+                "so indicators carry the live session."
+                if live_mode == "appended"
+                else "Today's live price is overlaid on the archived bar (its close "
+                "was not published yet), so indicators carry the live session."
+                if live_mode == "overlay"
+                else "No live merge needed: the latest session is fully archived"
+                if live_quote is not None
+                else "No live quote for this symbol right now; indicators are computed "
+                "on archived sessions only."
+            ),
+        },
         "range": {
             "requested": range_key,
             "available": range_available,

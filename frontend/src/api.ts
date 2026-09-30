@@ -264,6 +264,40 @@ export const archive = {
   }) => plain<{ detail: string }>("/api/archive/backfill", { method: "POST", body: JSON.stringify(body) }),
 };
 
+/* -- realtime --------------------------------------------------------------- */
+
+export interface LiveQuote {
+  symbol: string;
+  ltp: number;
+  change: number;
+  change_pct: number;
+  volume: number;
+  turnover: number;
+  high: number;
+  low: number;
+  timestamp: string;
+}
+
+export interface LivePricesResponse {
+  quotes: LiveQuote[];
+  count: number;
+  requested: string[] | null;
+  as_of: string | null;
+}
+
+export const realtime = {
+  /** Live prices from the backend's shared NEPSE poller (server-side cached,
+   * so this is cheap to poll every 30s). Empty quotes = no pass yet or the
+   * market feed is closed/pre-open. */
+  prices: (symbols?: string[], signal?: AbortSignal) =>
+    plain<LivePricesResponse>(
+      `/api/realtime/prices${symbols?.length ? `?symbols=${encodeURIComponent(symbols.join(","))}` : ""}`,
+      { signal },
+    ),
+  price: (symbol: string, signal?: AbortSignal) =>
+    plain<LiveQuote>(`/api/realtime/prices/${encodeURIComponent(symbol)}`, { signal }),
+};
+
 /* -- analytics ------------------------------------------------------------ */
 
 export const analytics = {

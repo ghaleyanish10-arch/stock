@@ -12,11 +12,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.config import settings
 from app.db.models import JobRun
 from app.db.base import utcnow
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +141,14 @@ async def daily_snapshot(archive_service: "ArchiveService") -> dict:
     Only today is attempted: a date older than today is not the post-close
     snapshot's business, and a full backfill is the explicit
     `POST /api/archive/backfill` action.
+
+    After ingesting today, also re-check recent sessions for null closes
+    and re-ingest them so indicators never blank out.
     """
     from sqlalchemy import select
 
     from app.archive.service import DayState
+    from app.db.models import DailyBar, TradingDay
 
     # Resolved late, like in _record(): tests rebind app.db.session.SessionLocal
     # to a throwaway database, and an import-time binding would pin this job to
@@ -220,8 +227,101 @@ async def daily_snapshot(archive_service: "ArchiveService") -> dict:
             "ok",
             f"{today}: {outcome.row_count} rows ({outcome.state.value})",
         )
+
+        # --- Re-check recent sessions for null closes and repair them ---
+        # A session with any null close breaks indicator windows (SMA, EMA, RSI,
+        # ...) and blanks the Technical page. Re-ingest the most recent prior
+        # sessions whose bars still carry a null close - never today: today is
+        # the session this run just wrote, and the post-close gate above already
+        # guarantees it was fetched after the close.
+        repaired = await _repair_null_closes(archive_service, session, today)
+
         return {"ran": True, "date": today, "rows": outcome.row_count,
-                "state": outcome.state.value}
+                "state": outcome.state.value, "repaired_dates": repaired}
+
+
+async def _repair_null_closes(
+    archive_service: "ArchiveService",
+    session: "Session",
+    today: str,
+    lookback: int = 5,
+) -> list[str]:
+    """Re-ingest recent *prior* sessions whose bars still have a null close.
+
+    A day saved before the close (forced run, crash, partial publish) stores
+    rows with `close = NULL`. Those nulls poison every indicator window that
+    spans them, so the post-close job walks the most recent prior sessions,
+    re-fetches the ones that have any, and verifies the result. Sessions whose
+    rows were incomplete but could not be repaired are re-marked with a
+    `provisional:` note so the next run retries them.
+
+    Returns the list of dates that were re-ingested (repaired or not).
+    """
+    from sqlalchemy import func, select
+
+    from app.db.models import DailyBar, TradingDay
+
+    stmt = (
+        select(TradingDay.business_date)
+        .where(TradingDay.is_session.is_(True))
+        .where(TradingDay.business_date < today)  # never today itself
+        .order_by(TradingDay.business_date.desc())
+        .limit(lookback)
+    )
+    prior_dates = list(session.scalars(stmt))
+
+    repaired: list[str] = []
+    for d in prior_dates:
+        null_count = session.scalar(
+            select(func.count())
+            .select_from(DailyBar)
+            .where(DailyBar.business_date == d)
+            .where(DailyBar.close.is_(None))
+        )
+        if not null_count:
+            continue
+        row = session.get(TradingDay, d)
+        rows_before = row.row_count if row is not None else None
+        logger.info("daily_snapshot: repairing %d null closes for %s", null_count, d)
+        try:
+            # A prior date we still expect to have traded: an empty response is
+            # "not published / transient", not a holiday, so keep it unknown
+            # (DEFERRED) rather than writing the day off as a non-session.
+            outcome = await archive_service.ingest_day(
+                session, d, treat_empty_as_non_session=False
+            )
+        except Exception as exc:  # noqa: BLE001 - repair must not kill the job
+            logger.warning("daily_snapshot: repair re-ingest failed for %s: %s", d, exc)
+            outcome = None
+
+        still_null = session.scalar(
+            select(func.count())
+            .select_from(DailyBar)
+            .where(DailyBar.business_date == d)
+            .where(DailyBar.close.is_(None))
+        )
+        if still_null:
+            # Re-ingest did not produce a complete day. Flag the session as
+            # provisional so the next run retries it (Phase 3b: a session is
+            # only final when every row has a close).
+            if row is not None:
+                row.note = f"provisional: {still_null} closes still null after repair"
+                session.add(row)
+            logger.warning(
+                "daily_snapshot: %s remains provisional (%d closes still null)",
+                d, still_null,
+            )
+        else:
+            if row is not None:
+                row.note = None  # fully repaired: the session is final again
+                session.add(row)
+            repaired.append(d)
+            logger.info(
+                "daily_snapshot: repaired %s (rows %s -> %s)",
+                d, rows_before, outcome.row_count if outcome else None,
+            )
+    session.commit()
+    return repaired
 
 
 async def job_loop(archive_service: "ArchiveService", interval_seconds: int = 900) -> None:

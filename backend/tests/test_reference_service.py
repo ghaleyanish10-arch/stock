@@ -646,17 +646,31 @@ class TestCompanyEndpoint:
             assert news["count"] == 2
 
     @pytest.mark.anyio
-    async def test_company_endpoint_depth_none_returns_unavailable(self) -> None:
+    async def test_company_endpoint_depth_none_returns_unavailable(
+        self, monkeypatch
+    ) -> None:
+        from app.reference import company as company_module
         from app.reference.company import _depth_section
 
+        # Hermetic: _depth_section resolves the process-wide NEPSE adapter via
+        # get_adapter(), so stub THAT. Unstubbed, this test silently hit the
+        # live nepalstock.com.np order book and passed only while the market
+        # was closed; during a session the real depth answered and the
+        # assertion failed.
+        class _DepthlessAdapter:
+            async def call(self, _op, fn):
+                return fn()
+
+            def get_market_depth(self, security_id: int):
+                return None  # NEPSE's empty-body answer outside trading hours
+
+        monkeypatch.setattr(company_module, "get_adapter", lambda: _DepthlessAdapter())
+
         client = FakeClient()
-        client.get_market_depth = lambda sid: None
         svc = self._service(client)
         with self.Session() as s:
             await svc.sync_securities(s)
             security = s.get(Security, "NABIL")
-            # Use asyncio to run the async function
-            import asyncio
             depth = await _depth_section(security, "NABIL")
             assert depth["available"] is False
             assert depth["status"] == "upstream_unavailable"

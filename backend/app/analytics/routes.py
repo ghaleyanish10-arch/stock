@@ -16,18 +16,46 @@ from app.analytics.indicators import (
     Bar,
     accumulation_distribution_line,
     atr,
-    bollinger,
+    awesome_oscillator,
+    bollinger_on_valid,
+    cci,
     chaikin_money_flow,
-    ema,
-    macd,
+    chaikin_oscillator,
+    chaikin_volatility,
+    demark_pivots,
+    donchian,
+    ease_of_movement,
+    ema_on_valid,
+    fibonacci_extension,
+    fibonacci_fan,
+    fibonacci_retracement,
+    force_index,
+    historical_volatility,
+    keltner,
+    klinger_oscillator,
+    macd_on_valid,
     money_flow_index,
+    momentum,
     obv,
+    pivot_points,
+    camarilla_pivots,
+    stochastic,
+    stdev_series,
+    supertrend,
+    tsi,
+    ultimate_oscillator,
+    volume_price_trend,
+    volume_oscillator,
     roc,
-    rsi,
-    sma,
+    rsi_on_valid,
+    rvi,
+    sma_on_valid,
+    stoch_rsi,
     vwap,
     vwap_series,
     volume_sma_ratio,
+    vwma,
+    williams_r,
 )
 from app.archive.service import ArchiveService
 from app.auth.deps import DbSession
@@ -90,11 +118,11 @@ async def indicators(
     bars = _bars_from_rows(rows)
     dates = [b.date for b in bars]
     closes: list[Optional[float]] = [b.close for b in bars]
-    rsi_14 = rsi(closes, 14)
-    macd_line, macd_signal, macd_hist = macd(closes)
-    bb_mid, bb_up, bb_lo, bb_bw, bb_pctb = bollinger(closes, 20, 2.0)
-    sma_20 = sma(closes, 20)
-    ema_20 = ema(closes, 20)
+    rsi_14 = rsi_on_valid(closes, 14)
+    macd_line, macd_signal, macd_hist = macd_on_valid(closes)
+    bb_mid, bb_up, bb_lo, bb_bw, bb_pctb = bollinger_on_valid(closes, 20, 2.0)
+    sma_20 = sma_on_valid(closes, 20)
+    ema_20 = ema_on_valid(closes, 20)
     ad_line = accumulation_distribution_line(bars)
     obv_series = obv(bars)
     cmf_20 = chaikin_money_flow(bars, 20)
@@ -102,6 +130,35 @@ async def indicators(
     atr_14 = atr(bars, 14)
     vw = vwap_series(bars)
     vol_ratio = volume_sma_ratio(bars, 20)
+
+    # -- Trading Indicators notes: the wider suite --------------------------
+    stoch_k, stoch_d = stochastic(bars, 14, 3)
+    stochrsi = stoch_rsi(closes, 14, 14)
+    cci_20 = cci(bars, 20)
+    willr_14 = williams_r(bars, 14)
+    mom_10 = momentum(closes, 10)
+    uo = ultimate_oscillator(bars, 7, 14, 28)
+    ao = awesome_oscillator(bars, 5, 34)
+    tsi_line = tsi(closes, 25, 13)
+    rvi_line, rvi_signal = rvi(bars)
+    sd_20 = stdev_series(closes, 20)
+    kc_mid, kc_up, kc_lo = keltner(bars, 20, 2.0, 10)
+    dc_up, dc_lo, dc_mid = donchian(bars, 20)
+    hv_20 = historical_volatility(closes, 20, 252)
+    cv = chaikin_volatility(bars, 10, 10)
+    vpt_line = volume_price_trend(bars)
+    emv_14 = ease_of_movement(bars, 14)
+    fi_13 = force_index(bars, 13)
+    vo = volume_oscillator(bars, 5, 20)
+    kvo = klinger_oscillator(bars, 34, 55)
+    cho = chaikin_oscillator(bars, 3, 10)
+    vwma_20 = vwma(closes, [b.volume for b in bars], 20)
+    piv = pivot_points(bars)
+    cam = camarilla_pivots(bars)
+    fbr = fibonacci_retracement(bars)
+    fex = fibonacci_extension(bars)
+    ffa = fibonacci_fan(bars)
+    sup = supertrend(bars, 10, 3.0)
 
     return {
         "symbol": sym,
@@ -136,6 +193,51 @@ async def indicators(
             "vwap": _zip_dates(dates, vw),
             "volume_vs_20d_pct": _zip_dates(dates, vol_ratio),
             "roc_1": _zip_dates(dates, roc(closes, 1)),
+            # Momentum (notes)
+            "stoch_k": _zip_dates(dates, stoch_k),
+            "stoch_d": _zip_dates(dates, stoch_d),
+            "stoch_rsi": _zip_dates(dates, stochrsi),
+            "cci_20": _zip_dates(dates, cci_20),
+            "williams_r_14": _zip_dates(dates, willr_14),
+            "momentum_10": _zip_dates(dates, mom_10),
+            "ultimate_osc": _zip_dates(dates, uo),
+            "awesome_osc": _zip_dates(dates, ao),
+            "tsi": _zip_dates(dates, tsi_line),
+            "rvi": _zip_dates(dates, rvi_line),
+            "rvi_signal": _zip_dates(dates, rvi_signal),
+            # Volatility (notes)
+            "stdev_20": _zip_dates(dates, sd_20),
+            "keltner_upper": _zip_dates(dates, kc_up),
+            "keltner_middle": _zip_dates(dates, kc_mid),
+            "keltner_lower": _zip_dates(dates, kc_lo),
+            "donchian_upper": _zip_dates(dates, dc_up),
+            "donchian_middle": _zip_dates(dates, dc_mid),
+            "donchian_lower": _zip_dates(dates, dc_lo),
+            "historical_vol_20": _zip_dates(dates, hv_20),
+            "chaikin_volatility": _zip_dates(dates, cv),
+            # Volume (notes)
+            "vpt": _zip_dates(dates, vpt_line),
+            "emv_14": _zip_dates(dates, emv_14),
+            "force_index_13": _zip_dates(dates, fi_13),
+            "volume_osc": _zip_dates(dates, vo),
+            "klinger": _zip_dates(dates, kvo),
+            "chaikin_osc": _zip_dates(dates, cho),
+            "vwma_20": _zip_dates(dates, vwma_20),
+            "supertrend": _zip_dates(dates, sup),
+            # Pivots / Fibonacci (notes)
+            "pivot_pp": _zip_dates(dates, piv["pp"]),
+            "pivot_r1": _zip_dates(dates, piv["r1"]),
+            "pivot_r2": _zip_dates(dates, piv["r2"]),
+            "pivot_s1": _zip_dates(dates, piv["s1"]),
+            "pivot_s2": _zip_dates(dates, piv["s2"]),
+            "cam_pp": _zip_dates(dates, cam["pp"]),
+            "cam_r3": _zip_dates(dates, cam["r3"]),
+            "cam_r4": _zip_dates(dates, cam["r4"]),
+            "cam_s3": _zip_dates(dates, cam["s3"]),
+            "cam_s4": _zip_dates(dates, cam["s4"]),
+            "fib_618": _zip_dates(dates, fbr["fib_618"]),
+            "fibe_1618": _zip_dates(dates, fex["fibe_1618"]),
+            "fibf_500": _zip_dates(dates, ffa["fibf_500"]),
         },
         "notes": {
             "unavailable": (
@@ -149,6 +251,12 @@ async def indicators(
             "broker_flow": (
                 "Per-broker Accumulation & Distribution is not available: NEPSE's "
                 "floorsheet leaves broker fields null and ignores its own broker filter."
+            ),
+            "order_flow": (
+                "CVD here is the daily close-to-close proxy (see its definition), and "
+                "Open Interest is not implemented: it counts outstanding derivative "
+                "contracts, which NEPSE's equity feed does not publish. Returning a "
+                "fabricated series would be worse than an honest absence."
             ),
         },
     }
@@ -177,19 +285,19 @@ async def summary(symbol: str, session: DbSession) -> dict[str, Any]:
             )
         return Measured.of(value, source="derived", as_of=as_of)
 
-    macd_line, macd_signal, macd_hist = macd(closes)
-    bb_mid, bb_up, bb_lo, _bw, pctb = bollinger(closes, 20, 2.0)
+    macd_line, macd_signal, macd_hist = macd_on_valid(closes)
+    bb_mid, bb_up, bb_lo, _bw, pctb = bollinger_on_valid(closes, 20, 2.0)
 
     return {
         "symbol": sym,
         "as_of": as_of,
         "close": Measured.of(closes[-1], source="nepse:today-price", as_of=as_of),
-        "rsi_14": _last(rsi(closes, 14)),
+        "rsi_14": _last(rsi_on_valid(closes, 14)),
         "macd": _last(macd_line),
         "macd_signal": _last(macd_signal),
         "macd_histogram": _last(macd_hist),
-        "sma_20": _last(sma(closes, 20)),
-        "ema_20": _last(ema(closes, 20)),
+        "sma_20": _last(sma_on_valid(closes, 20)),
+        "ema_20": _last(ema_on_valid(closes, 20)),
         "bb_upper": _last(bb_up),
         "bb_middle": _last(bb_mid),
         "bb_lower": _last(bb_lo),

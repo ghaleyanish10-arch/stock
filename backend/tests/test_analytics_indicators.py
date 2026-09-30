@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.analytics.indicators import (
     Bar,
     accumulation_distribution,
@@ -10,12 +12,15 @@ from app.analytics.indicators import (
     aroon,
     atr,
     bollinger,
+    bollinger_on_valid,
     chaikin_money_flow,
     dema,
     ema,
+    ema_on_valid,
     hma,
     ichimoku,
     macd,
+    macd_on_valid,
     money_flow_index,
     money_flow_multiplier,
     money_flow_volume,
@@ -23,7 +28,10 @@ from app.analytics.indicators import (
     psar,
     roc,
     rsi,
+    rsi_on_valid,
     sma,
+    sma_on_valid,
+    stdev,
     supertrend,
     tema,
     trix,
@@ -1089,3 +1097,97 @@ class TestAdjustedClose:
 
         assert adjusted[0] == 100.0
         assert adjusted[1] == 101.0  # on book close date
+
+
+class TestComputeOnValid:
+    """Phase 4: a null close must not blank the windows after it.
+
+    The plain functions (`sma`, `ema`, `rsi`, `macd`, `bollinger`) return None
+    for any window touching a gap - the strict contract the Batch A tests
+    lock in. The `*_on_valid` variants are the chart/page layer's answer: they
+    compute on the non-None closes only, so one missing close costs one point
+    instead of twenty days of output.
+    """
+
+    # 25 closes with a single null at index 3. Long enough for every warm-up
+    # used below (MACD needs 26 for signal? no: signal needs 12+26... kept at
+    # 25 so SMA/EMA/RSI/Bollinger are all past warm-up; MACD asserts only the
+    # no-crash + alignment contract, not values).
+    GAP_SERIES = [1.0, 2, 3, None, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                  16, 17, 18, 19, 20, 21, 22, 23, 24, 25]
+
+    def test_sma_skips_gap(self):
+        out = sma_on_valid(self.GAP_SERIES, 3)
+        assert len(out) == len(self.GAP_SERIES)  # lengths always match
+        assert out[2] == 2.0
+        assert out[3] is None  # the null position itself stays None
+        # Window at index 4 spans the last 3 *valid* values (2, 3, 5): the
+        # gap is skipped, not propagated.
+        assert out[4] == (2.0 + 3.0 + 5.0) / 3
+        assert out[24] == (23.0 + 24.0 + 25.0) / 3
+
+    def test_ema_skips_gap(self):
+        out = ema_on_valid(self.GAP_SERIES, 3)
+        assert len(out) == len(self.GAP_SERIES)
+        assert out[2] == 2.0  # SMA seed of the first 3 closes
+        assert out[3] is None
+        # Recurrence continues across the gap on valid values only.
+        alpha = 2.0 / 4.0
+        assert out[4] == pytest.approx(alpha * 5.0 + (1 - alpha) * 2.0)
+        # A null-free suffix equals the plain ema on the same values.
+        tail = self.GAP_SERIES[4:]
+        assert ema_on_valid(tail, 3)[-1] == ema(tail, 3)[-1]
+
+    def test_rsi_skips_gap(self):
+        out = rsi_on_valid(self.GAP_SERIES, 14)
+        assert len(out) == len(self.GAP_SERIES)
+        assert out[3] is None
+        # Strictly rising closes -> RSI 100 once warm, gap or no gap. The gap
+        # sits at original index 3, so clean index 14 (the first RSI value)
+        # maps back to original index 15.
+        assert out[15] == 100.0
+        assert out[24] == 100.0
+
+    def test_macd_skips_gap_and_never_crashes(self):
+        # Regression: macd_on_valid used to do `None - None` on the ema
+        # warm-up and raised TypeError on every request.
+        long_series = list(self.GAP_SERIES) + [26.0, 27.0, 28.0, 29.0, 30.0]
+        line, signal, hist = macd_on_valid(long_series)
+        assert len(line) == len(long_series)
+        assert len(signal) == len(long_series)
+        assert len(hist) == len(long_series)
+        assert line[3] is None and signal[3] is None and hist[3] is None
+        # Past both warm-ups every position carries a real number.
+        assert all(v is not None for v in line[34:])
+        assert all(v is not None for v in signal[34:])
+
+    def test_macd_matches_plain_macd_on_null_free_input(self):
+        clean = [float(i) for i in range(1, 41)]
+        l1, s1, h1 = macd(clean)
+        l2, s2, h2 = macd_on_valid(clean)
+        assert l1 == l2 and s1 == s2 and h1 == h2
+
+    def test_bollinger_skips_gap(self):
+        mid, up, lo, bw, pctb = bollinger_on_valid(self.GAP_SERIES, 5, 2.0)
+        assert len(mid) == len(self.GAP_SERIES)
+        assert mid[3] is None and up[3] is None and lo[3] is None
+        # Index 7 window = last 5 valid closes (3, 5, 6, 7, 8).
+        assert mid[7] == pytest.approx((3 + 5 + 6 + 7 + 8) / 5)
+        assert up[7] == pytest.approx(mid[7] + 2.0 * stdev([3, 5, 6, 7, 8]))
+
+    def test_all_null_input_returns_all_null_not_crash(self):
+        # Regression guard for the shared-list aliasing the first draft had:
+        # the five bollinger lists (and three macd lists) must be independent.
+        empties = [None] * 7
+        l, s, h = macd_on_valid(empties)
+        assert l == s == h == [None] * 7
+        l[0] = 1.0
+        assert s[0] is None  # mutating one list must not touch the others
+        m, u, lo, bw, p = bollinger_on_valid(empties, 5, 2.0)
+        m[0] = 1.0
+        assert u[0] is None and lo[0] is None
+
+    def test_dates_never_shift(self):
+        dates = [f"2026-09-{i:02d}" for i in range(1, 26)]
+        out = sma_on_valid(self.GAP_SERIES, 3)
+        assert len(dates) == len(out)  # zip in the routes stays 1:1

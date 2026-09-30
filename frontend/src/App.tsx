@@ -6,7 +6,7 @@
  * button needs exactly that).
  */
 
-import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { AppShell } from "./components/AppShell";
@@ -21,7 +21,6 @@ import { FundsPage } from "./pages/FundsPage";
 import { SignInPage } from "./pages/SignInPage";
 import { MarketMapPage } from "./pages/MarketMapPage";
 import { ScreenerPage } from "./pages/ScreenerPage";
-import { CompanyPage } from "./pages/CompanyPage";
 import { DividendAnalysisPage } from "./pages/DividendAnalysisPage";
 import { CorporateActionsPage } from "./pages/CorporateActionsPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
@@ -59,8 +58,10 @@ export default function App() {
               <Route path="/archive" element={<ArchivePage />} />
               <Route path="/map" element={<MarketMapPage />} />
               <Route path="/screener" element={<ScreenerPage />} />
-              {/* `/chart/:symbol` is the company + technical page (STEP 2c). */}
-              <Route path="/chart/:symbol" element={<CompanyPage />} />
+              {/* `/chart/:symbol` now lives on the Technical page (Phase 5b):
+                  keep the old URLs working by redirecting to /analytics?symbol= */}
+              <Route path="/chart/:symbol" element={<ChartRedirect />} />
+              <Route path="/chart" element={<Navigate to="/analytics" replace />} />
               <Route path="/analytics" element={<AnalyticsWithSymbol />} />
               <Route path="/dividends" element={<DividendAnalysisPage />} />
               <Route path="/corporate-actions" element={<CorporateActionsPage />} />
@@ -110,4 +111,10 @@ function AnalyticsWithSymbol() {
   const [params] = useSearchParams();
   const symbol = params.get("symbol");
   return <AnalyticsPage initialSymbol={symbol ?? undefined} />;
+}
+
+/** Old `/chart/:symbol` bookmarks land on the same content on the Technical page. */
+function ChartRedirect() {
+  const { symbol } = useParams<{ symbol: string }>();
+  return <Navigate to={`/analytics?symbol=${encodeURIComponent(symbol ?? "")}`} replace />;
 }

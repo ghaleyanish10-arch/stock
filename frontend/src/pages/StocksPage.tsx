@@ -86,13 +86,17 @@ export function StocksPage() {
 
   const rows = useMemo(() => {
     const all = query.data?.stocks ?? [];
-    const needle = search.trim().toLowerCase();
-    const filtered = needle
-      ? all.filter(
-          (s) =>
-            s.symbol.toLowerCase().includes(needle) ||
-            (s.security_name ?? "").toLowerCase().includes(needle),
-        )
+    const words = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    // Word-based matching against the normalized name AND symbol; also match
+    // a whitespace-collapsed copy of the raw name (live rows occasionally
+    // carry double spaces from the upstream feed).
+    const filtered = words.length
+      ? all.filter((s) => {
+          const name = (s.security_name ?? "").toLowerCase();
+          const norm = name.replace(/\s+/g, " ");
+          const sym = s.symbol.toLowerCase();
+          return words.every((w) => sym.includes(w) || name.includes(w) || norm.includes(w));
+        })
       : all;
     return [...filtered].sort((a, b) => {
       const av = a[sort.key] ?? -Infinity;

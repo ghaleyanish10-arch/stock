@@ -319,6 +319,137 @@ def _with_frozen_now(
         scheduler.nepal_now = original
 
 
+class TestRepairNullCloses:
+    """Phase 3: the post-close job re-checks recent sessions for null closes.
+
+    A day saved before the close stores rows with close = NULL, which blanks
+    every indicator window spanning them (and 404s the whole summary page via
+    macd). The repair walk re-ingests the most recent affected prior sessions.
+    """
+
+    @pytest.fixture()
+    def db(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from app.db.base import Base
+
+        engine = create_engine("sqlite://", future=True)
+        Base.metadata.create_all(bind=engine)
+        factory = sessionmaker(bind=engine, future=True)
+        with factory() as s:
+            yield s
+        engine.dispose()
+
+    def _session_day(self, db, business_date: str) -> None:
+        from app.db.models import TradingDay
+
+        db.add(TradingDay(business_date=business_date, is_session=True, row_count=1))
+        db.commit()
+
+    def _null_close_bar(self, db, business_date: str, symbol: str = "NABIL") -> None:
+        from app.db.models import DailyBar
+
+        db.add(DailyBar(business_date=business_date, symbol=symbol, close=None))
+        db.commit()
+
+    class _RepairingService:
+        """Stands in for the archive service: re-ingest fills the close."""
+
+        def __init__(self) -> None:
+            self.ingested: list[str] = []
+
+        async def ingest_day(self, session, day, treat_empty_as_non_session=True):
+            from app.db.models import DailyBar
+
+            self.ingested.append(day)
+            for bar in session.query(DailyBar).filter_by(business_date=day):
+                bar.close = 500.0
+            session.commit()
+
+    @pytest.mark.anyio
+    async def test_reingests_prior_session_with_null_close(self, db) -> None:
+        import app.jobs.scheduler as scheduler
+
+        self._session_day(db, "2026-09-26")
+        self._null_close_bar(db, "2026-09-26")
+        service = self._RepairingService()
+
+        repaired = await scheduler._repair_null_closes(service, db, "2026-09-28")
+
+        assert service.ingested == ["2026-09-26"]
+        assert repaired == ["2026-09-26"]
+
+    @pytest.mark.anyio
+    async def test_skips_sessions_without_null_closes(self, db) -> None:
+        import app.jobs.scheduler as scheduler
+        from app.db.models import DailyBar
+
+        self._session_day(db, "2026-09-26")
+        db.add(DailyBar(business_date="2026-09-26", symbol="NABIL", close=500.0))
+        db.commit()
+        service = self._RepairingService()
+
+        repaired = await scheduler._repair_null_closes(service, db, "2026-09-28")
+
+        assert service.ingested == []  # nothing to fix, nothing fetched
+        assert repaired == []
+
+    @pytest.mark.anyio
+    async def test_never_touches_today(self, db) -> None:
+        """Today was just written by this very run, after the close gate."""
+        import app.jobs.scheduler as scheduler
+
+        self._session_day(db, "2026-09-28")
+        self._null_close_bar(db, "2026-09-28")
+        service = self._RepairingService()
+
+        repaired = await scheduler._repair_null_closes(service, db, "2026-09-28")
+
+        assert service.ingested == []
+        assert repaired == []
+
+    @pytest.mark.anyio
+    async def test_marks_provisional_when_nulls_survive_repair(self, db) -> None:
+        """Phase 3b: a session whose closes stay null is flagged, not final.
+
+        A day with an unresolved null close keeps a `provisional:` note, so the
+        next run re-checks it instead of trusting the row count.
+        """
+        import app.jobs.scheduler as scheduler
+        from app.db.models import TradingDay
+
+        self._session_day(db, "2026-09-26")
+        self._null_close_bar(db, "2026-09-26")
+
+        class _StubbornService:
+            async def ingest_day(self, session, day, treat_empty_as_non_session=True):
+                pass  # "NEPSE still has nothing" - the null survives
+
+        repaired = await scheduler._repair_null_closes(_StubbornService(), db, "2026-09-28")
+
+        assert repaired == []
+        note = db.get(TradingDay, "2026-09-26").note
+        assert note is not None and note.startswith("provisional:")
+
+    @pytest.mark.anyio
+    async def test_repair_error_does_not_kill_the_job(self, db) -> None:
+        import app.jobs.scheduler as scheduler
+        from app.db.models import TradingDay
+
+        self._session_day(db, "2026-09-26")
+        self._null_close_bar(db, "2026-09-26")
+
+        class _ExplodingService:
+            async def ingest_day(self, session, day, treat_empty_as_non_session=True):
+                raise RuntimeError("upstream down")
+
+        repaired = await scheduler._repair_null_closes(_ExplodingService(), db, "2026-09-28")
+
+        assert repaired == []
+        assert db.get(TradingDay, "2026-09-26").note.startswith("provisional:")
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"

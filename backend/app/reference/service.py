@@ -108,6 +108,19 @@ def _text(value: Any) -> Optional[str]:
     return text or None
 
 
+def _name_text(value: Any) -> Optional[str]:
+    """For display names: collapse internal whitespace runs.
+
+    NEPSE name fields arrive with irregular spacing ("Prabhu  Bank Limited",
+    double space), which broke word-based search. Unlike `_text`, this must
+    NOT be applied to body/structured text where line layout carries meaning.
+    """
+    text = _text(value)
+    if text is None:
+        return None
+    return " ".join(text.split())
+
+
 #: Labelled lines that carry dividend/book-closure/AGM facts inside
 #: announcement text. Case-insensitive; the value is kept verbatim.
 _NOTICE_LABELS: tuple[tuple[str, str], ...] = (
@@ -211,7 +224,7 @@ class ReferenceService:
                 security = Security(symbol=symbol)
                 session.add(security)
             security.name = (
-                _text(row.get("securityName") or row.get("name")) or security.name
+                _name_text(row.get("securityName") or row.get("name")) or security.name
             )
             security.nepse_security_id = (
                 _int(row.get("id") or row.get("securityId")) or security.nepse_security_id
@@ -405,7 +418,7 @@ class ReferenceService:
         if detail:
             sec = detail.get("security") if isinstance(detail.get("security"), dict) else {}
             fund.scheme_description = _text(sec.get("schemeDescription"))
-            fund.scheme_name = _text(sec.get("schemeName"))
+            fund.scheme_name = _name_text(sec.get("schemeName"))
             fund.isin = _text(sec.get("isin")) or fund.isin
             fund.face_value = _num(sec.get("faceValue")) or fund.face_value
             fund.listing_date = (
@@ -454,10 +467,15 @@ class ReferenceService:
         if active_only:
             stmt = stmt.where(Security.is_active.is_(True))
         if search:
-            pattern = f"%{search.strip().upper()}%"
-            stmt = stmt.where(
-                Security.symbol.ilike(pattern) | Security.name.ilike(pattern)
-            )
+            # Upstream names carry irregular spacing ("Prabhu  Bank Limited",
+            # double space) and users type natural queries ("prabhu bank"), so
+            # collapse runs of whitespace on both sides before the LIKE: each
+            # word is matched by a %..% pattern joined with AND.
+            words = search.split()
+            for w in words:
+                stmt = stmt.where(
+                    Security.symbol.ilike(f"%{w}%") | Security.name.ilike(f"%{w}%")
+                )
         return list(session.scalars(stmt.order_by(Security.symbol).limit(2000)))
 
     # -- sectors -------------------------------------------------------
@@ -509,7 +527,7 @@ class ReferenceService:
         count = 0
         for row in rows:
             code = _text(row.get("memberCode") or row.get("code"))
-            name = _text(row.get("memberName") or row.get("name"))
+            name = _name_text(row.get("memberName") or row.get("name"))
             if not code or not name:
                 continue
             broker = session.get(Broker, code)
@@ -554,8 +572,9 @@ class ReferenceService:
         if province:
             stmt = stmt.where(Broker.province == province)
         if search:
-            pattern = f"%{search.strip()}%"
-            stmt = stmt.where(Broker.member_name.ilike(pattern))
+            # Same whitespace-tolerant word matching as list_securities.
+            for w in search.split():
+                stmt = stmt.where(Broker.member_name.ilike(f"%{w}%"))
         return list(session.scalars(stmt.order_by(Broker.member_name).limit(1000)))
 
     def broker_provinces(self, session: Session) -> list[str]:

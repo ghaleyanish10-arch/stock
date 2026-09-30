@@ -152,14 +152,19 @@ class RealTimeService:
             await asyncio.sleep(30)
 
     async def _poll_once(self):
-        """Single poll: fetch live market data and broadcast updates."""
+        """Single poll: fetch live market data and broadcast updates.
+
+        Uses the adapter's get_stocks(), which is the live-market list with the
+        price/volume fallback for pre-open (an earlier draft called a
+        get_live_market() that never existed, so every poll failed silently).
+        Rows are camelCase NEPSE payloads (lastTradedPrice, previousClose, ...).
+        """
         try:
-            # Get live market data from NEPSE
             live_data = await self._adapter.call(
-                "live_market",
-                lambda: self._adapter.get_live_market()
+                "get_stocks",
+                lambda: self._adapter.get_stocks(),
             )
-            
+
             if not live_data or not isinstance(live_data, list):
                 logger.warning("Live market returned empty or invalid data")
                 return
@@ -168,35 +173,41 @@ class RealTimeService:
             now = datetime.utcnow()
 
             for item in live_data:
-                symbol = item.get("symbol")
+                if not isinstance(item, dict):
+                    continue
+                symbol = item.get("symbol") or item.get("securitySymbol")
                 if not symbol:
                     continue
-                
-                ltp = item.get("last_traded_price") or item.get("close_price")
+
+                ltp = (
+                    item.get("lastTradedPrice")
+                    or item.get("ltp")
+                    or item.get("closePrice")
+                )
                 if ltp is None:
                     continue
 
-                # Calculate change
-                prev_close = item.get("previous_close")
+                # Calculate change vs the previous close
+                prev_close = item.get("previousClose") or item.get("cp")
                 change = ltp - prev_close if prev_close else 0
                 change_pct = (change / prev_close * 100) if prev_close else 0
 
                 update = PriceUpdate(
-                    symbol=symbol.upper(),
+                    symbol=str(symbol).upper(),
                     ltp=ltp,
                     change=change,
                     change_pct=change_pct,
-                    volume=item.get("total_traded_quantity") or 0,
-                    turnover=item.get("total_traded_value") or 0.0,
-                    high=item.get("high_price") or ltp,
-                    low=item.get("low_price") or ltp,
+                    volume=item.get("totalTradeQuantity") or 0,
+                    turnover=item.get("totalTradeValue") or 0.0,
+                    high=item.get("highPrice") or ltp,
+                    low=item.get("lowPrice") or ltp,
                     timestamp=now,
                 )
                 updates.append(update)
 
                 # Update cache
                 async with self._lock:
-                    self._price_cache[symbol.upper()] = update
+                    self._price_cache[str(symbol).upper()] = update
 
             if not updates:
                 return
@@ -209,8 +220,10 @@ class RealTimeService:
 
             logger.debug(f"Real-time poll: updated {len(updates)} symbols")
 
-        except Exception as e:
-            logger.error(f"Error in _poll_once: {e}")
+        except Exception:
+            # Message-only logging hid AttributeError-style breakages (it once
+            # logged an empty string); always keep the traceback.
+            logger.exception("Error in _poll_once")
 
     async def _broadcast_symbol_updates(self, updates: List[PriceUpdate]):
         """Broadcast updates to WebSocket subscribers for specific symbols."""

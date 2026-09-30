@@ -659,7 +659,79 @@ export type IndicatorKey =
   | "ichimoku_senkou_a"
   | "ichimoku_senkou_b"
   | "ichimoku_chikou"
-  | "roc_1";
+  | "roc_1"
+  | "atr_14"
+  /* Trading Indicators notes additions */
+  | "stoch_k"
+  | "stoch_d"
+  | "stoch_rsi"
+  | "cci_20"
+  | "williams_r_14"
+  | "momentum_10"
+  | "ultimate_osc"
+  | "awesome_osc"
+  | "tsi"
+  | "rvi"
+  | "rvi_signal"
+  | "stdev_20"
+  | "keltner_upper"
+  | "keltner_middle"
+  | "keltner_lower"
+  | "donchian_upper"
+  | "donchian_middle"
+  | "donchian_lower"
+  | "historical_vol_20"
+  | "chaikin_volatility"
+  | "vpt"
+  | "emv_14"
+  | "force_index_13"
+  | "volume_osc"
+  | "klinger"
+  | "chaikin_osc"
+  | "vwma_20"
+  | "cvd"
+  | "pivot_pp"
+  | "pivot_r1"
+  | "pivot_r2"
+  | "pivot_r3"
+  | "pivot_s1"
+  | "pivot_s2"
+  | "pivot_s3"
+  | "cam_pp"
+  | "cam_r1"
+  | "cam_r2"
+  | "cam_r3"
+  | "cam_r4"
+  | "cam_s1"
+  | "cam_s2"
+  | "cam_s3"
+  | "cam_s4"
+  | "wpiv_pp"
+  | "wpiv_r1"
+  | "wpiv_r2"
+  | "wpiv_r3"
+  | "wpiv_s1"
+  | "wpiv_s2"
+  | "wpiv_s3"
+  | "dpiv_pp"
+  | "dpiv_r1"
+  | "dpiv_s1"
+  | "fib_236"
+  | "fib_382"
+  | "fib_500"
+  | "fib_618"
+  | "fib_786"
+  | "fibe_618"
+  | "fibe_1000"
+  | "fibe_1272"
+  | "fibe_1618"
+  | "fibe_2618"
+  | "fibf_382"
+  | "fibf_500"
+  | "fibf_618"
+  | "vp_poc"
+  | "vp_va_high"
+  | "vp_va_low";
 
 export interface ChartRangeOption {
   value: string;
@@ -675,6 +747,12 @@ export interface ChartResponse {
   as_of: string;
   series: ChartSeries;
   indicators: Partial<Record<IndicatorKey, (number | null)[]>>;
+  /** Live-session merge report: whether today's poller quote is the last bar. */
+  live?: {
+    merged: boolean;
+    quote: { ltp: number; change: number; change_pct: number; volume: number; timestamp: string } | null;
+    note: string;
+  };
   range: {
     requested: string;
     available: boolean;

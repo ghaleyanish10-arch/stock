@@ -117,7 +117,7 @@ export function HighlightsTicker() {
               {items.map((r) => (
                 <Link
                   key={`${copy}-${r.symbol}`}
-                  to={`/chart/${r.symbol}`}
+                  to={`/analytics?symbol=${encodeURIComponent(r.symbol)}`}
                   className={`ticker-item ${r.kind}`}
                 >
                   <strong>{r.symbol}</strong>
