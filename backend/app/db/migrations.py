@@ -56,6 +56,10 @@ _ADD_STEPS: tuple[tuple[str, str, str, str], ...] = (
     # Portfolio Ledger tables (B1)
     ("add_ledger_events_table", "ledger_events", "id", "VARCHAR(36) PRIMARY KEY"),
     ("add_ledger_replay_logs_table", "ledger_replay_logs", "id", "VARCHAR(36) PRIMARY KEY"),
+    # Holding lots for FIFO/CGT (B2)
+    ("add_holding_lots_table", "holding_lots", "id", "VARCHAR(36) PRIMARY KEY"),
+    # Fee/Tax rates (B3)
+    ("add_fee_tax_rates_table", "fee_tax_rates", "id", "VARCHAR(36) PRIMARY KEY"),
 )
 
 

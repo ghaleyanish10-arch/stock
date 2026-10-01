@@ -1,6 +1,6 @@
 /* Small shared UI pieces used across pages. */
 
-import React, { type ReactNode } from "react";
+import React, { type ReactNode, useState, useEffect, useRef } from "react";
 import { ApiError } from "../api";
 import type { Measured, ValueStatus } from "../types";
 
@@ -204,10 +204,6 @@ export interface VirtualizedTableProps<T> {
   overscan?: number;
 }
 
-/**
- * VirtualizedTable - renders only visible rows for large datasets.
- * Use for tables with 100+ rows to maintain smooth scrolling.
- */
 export function VirtualizedTable<T>({
   columns,
   rows,
@@ -217,12 +213,11 @@ export function VirtualizedTable<T>({
   rowHeight = 40,
   overscan = 5,
 }: VirtualizedTableProps<T>) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = React.useState(0);
-  const [containerHeight, setContainerHeight] = React.useState(400);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(400);
 
-  // Update container height on resize
-  React.useEffect(() => {
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const resizeObserver = new ResizeObserver((entries) => {
@@ -299,6 +294,276 @@ export function VirtualizedTable<T>({
   );
 }
 
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  size = "md",
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  size?: "sm" | "md" | "lg" | "xl";
+}) {
+  if (!isOpen) return null;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div
+        className={`modal modal-${size}`}
+        onClick={(e) => e.stopPropagation()}
+        role="document"
+      >
+        <header className="modal-header">
+          <h2 id="modal-title" className="modal-title">{title}</h2>
+          <button
+            type="button"
+            className="modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+export function Pagination({
+  currentPage,
+  totalPages,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  const pages: (number | string)[] = [];
+  const maxVisible = 5;
+  let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+  let end = Math.min(totalPages, start + maxVisible - 1);
+
+  if (end - start + 1 < maxVisible) {
+    start = Math.max(1, end - maxVisible + 1);
+  }
+
+  if (start > 1) {
+    pages.push(1);
+    if (start > 2) pages.push("...");
+  }
+
+  for (let i = start; i <= end; i++) {
+    pages.push(i);
+  }
+
+  if (end < totalPages) {
+    if (end < totalPages - 1) pages.push("...");
+    pages.push(totalPages);
+  }
+
+  return (
+    <nav className="pagination" aria-label="Pagination">
+      <button
+        className="pagination-btn"
+        onClick={() => onPageChange(currentPage - 1)}
+        disabled={currentPage === 1}
+        aria-label="Previous page"
+      >
+        ‹
+      </button>
+      {pages.map((page, i) =>
+        page === "..." ? (
+          <span key={`ellipsis-${i}`} className="pagination-ellipsis">…</span>
+        ) : (
+          <button
+            key={i}
+            className={`pagination-btn ${page === currentPage ? "active" : ""}`}
+            onClick={() => onPageChange(page as number)}
+            aria-current={page === currentPage ? "page" : undefined}
+            aria-label={`Page ${page}`}
+          >
+            {page}
+          </button>
+        )
+      )}
+      <button
+        className="pagination-btn"
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={currentPage === totalPages}
+        aria-label="Next page"
+      >
+        ›
+      </button>
+    </nav>
+  );
+}
+
+export function Button({
+  children,
+  onClick,
+  type = "button",
+  variant = "primary",
+  disabled = false,
+  loading = false,
+  className = "",
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit" | "reset";
+  variant?: "primary" | "secondary" | "danger" | "outline" | "ghost";
+  disabled?: boolean;
+  loading?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type={type}
+      className={`btn btn-${variant} ${className}`}
+      onClick={onClick}
+      disabled={disabled || loading}
+    >
+      {loading && <span className="spinner-sm" aria-hidden="true" />}
+      <span>{loading ? "Loading" : children}</span>
+    </button>
+  );
+}
+
+export function Input({
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  error,
+  disabled = false,
+  className = "",
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  error?: string;
+  className?: string;
+}) {
+  return (
+    <div className="input-wrapper">
+      <input
+        type={type}
+        value={value}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e)}
+        placeholder={placeholder}
+        disabled={disabled}
+        className={`form-input ${error ? "error" : ""} ${className}`}
+        {...props}
+      />
+      {error && <span className="input-error">{error}</span>}
+    </div>
+  );
+}
+
+export function Select({
+  value,
+  onChange,
+  options,
+  placeholder,
+  error,
+  disabled = false,
+  className = "",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  placeholder?: string;
+  error?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className="select-wrapper">
+      <select
+        value={value}
+        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
+        disabled={disabled}
+        className={`form-select ${error ? "error" : ""} ${className}`}
+      >
+        {placeholder && <option value="" disabled>{placeholder}</option>}
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {error && <span className="input-error">{error}</span>}
+    </div>
+  );
+}
+
+export function Alert({
+  children,
+  type = "info",
+  onDismiss,
+}: {
+  children: ReactNode;
+  type?: "info" | "error" | "success" | "warning";
+  onDismiss?: () => void;
+}) {
+  const [visible, setVisible] = useState(true);
+  if (!visible) return null;
+
+  return (
+    <div className={`alert alert-${type}`} role="alert">
+      <span>{children}</span>
+      {onDismiss && (
+        <button type="button" className="alert-dismiss" onClick={() => setVisible(false)} aria-label="Dismiss">
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function Textarea({
+  value,
+  onChange,
+  rows = 3,
+  placeholder,
+  className = "",
+  ...props
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  className?: string;
+}) {
+  return (
+    <textarea
+      value={value}
+      onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => onChange?.(e)}
+      rows={rows}
+      placeholder={placeholder}
+      className={`form-textarea ${className}`}
+      {...props}
+    />
+  );
+}
+
 export interface Column<T> {
   key: string;
   header: ReactNode;
@@ -350,8 +615,8 @@ export function Table<T>({
                   {c.render
                     ? c.render(row)
                     : ((row as Record<string, ReactNode>)[c.key] ?? null)}
-              </td>
-            ))}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>

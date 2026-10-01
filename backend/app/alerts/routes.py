@@ -6,6 +6,7 @@ from datetime import date
 from typing import Any, Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.deps import CurrentUser, DbSession
@@ -20,15 +21,18 @@ _alerts = AlertService(ReferenceService(get_adapter()))
 
 # --- Channels ---
 
+class CreateChannelRequest(BaseModel):
+    channel_type: str
+    config: dict
+
 
 @router.post("/channels", summary="Create notification channel")
 def create_channel(
     session: DbSession,
     user: CurrentUser,
-    channel_type: str,  # email, telegram, in_app
-    config: dict,
+    request: CreateChannelRequest,
 ) -> dict:
-    channel = _alerts.create_channel(session, user.id, channel_type, config)
+    channel = _alerts.create_channel(session, user.id, request.channel_type, request.config)
     return {
         "id": channel.id,
         "type": channel.channel_type,
@@ -94,20 +98,46 @@ def delete_channel(
 # --- Rules ---
 
 
+class CreateRuleRequest(BaseModel):
+    kind: str
+    symbol: Optional[str] = None
+    params: dict = {}
+    channel_id: Optional[str] = None
+    cooldown_seconds: int = 300
+    is_one_shot: bool = False
+
+
+class CreateChannelRequest(BaseModel):
+    channel_type: str
+    config: dict
+
+
+@router.post("/channels", summary="Create notification channel")
+def create_channel(
+    session: DbSession,
+    user: CurrentUser,
+    request: CreateChannelRequest,
+) -> dict:
+    channel = _alerts.create_channel(session, user.id, request.channel_type, request.config)
+    return {
+        "id": channel.id,
+        "type": channel.channel_type,
+        "config": channel.config,
+        "is_active": channel.is_active,
+        "is_verified": channel.is_verified,
+    }
+
+
 @router.post("/rules", summary="Create alert rule")
 def create_rule(
     session: DbSession,
     user: CurrentUser,
-    kind: str,  # price_above, price_below, pct_change, volume_spike, etc.
-    symbol: Optional[str] = None,
-    params: dict = {},
-    channel_id: Optional[str] = None,
-    cooldown_seconds: int = 300,
-    is_one_shot: bool = False,
+    request: CreateRuleRequest,
 ) -> dict:
     try:
         rule = _alerts.create_rule(
-            session, user.id, kind, symbol, params, channel_id, cooldown_seconds, is_one_shot
+            session, user.id, request.kind, request.symbol, request.params,
+            request.channel_id, request.cooldown_seconds, request.is_one_shot
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -173,13 +203,24 @@ def get_rule(
     }
 
 
+class UpdateRuleRequest(BaseModel):
+    kind: Optional[str] = None
+    symbol: Optional[str] = None
+    params: Optional[dict] = None
+    channel_id: Optional[str] = None
+    cooldown_seconds: Optional[int] = None
+    is_one_shot: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
 @router.patch("/rules/{rule_id}", summary="Update alert rule")
 def update_rule(
     rule_id: str,
     session: DbSession,
     user: CurrentUser,
-    **updates: Any,
+    request: UpdateRuleRequest,
 ) -> dict:
+    updates = request.model_dump(exclude_unset=True)
     rule = _alerts.update_rule(session, rule_id, user.id, **updates)
     if not rule:
         raise HTTPException(404, "Rule not found")

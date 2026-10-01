@@ -558,6 +558,52 @@ class Holding(Base):
     )
 
 
+class HoldingLot(Base):
+    """FIFO lot for holding period and capital gains tax tracking.
+    
+    WAC (weighted average cost) stays the official cost basis for P&L.
+    Lots are only used for:
+    - Holding period (short-term vs long-term)
+    - Capital gains tax calculation (FIFO method)
+    
+    Each lot tracks qty_remaining for FIFO consumption on sells.
+    """
+    __tablename__ = "holding_lots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # Original quantity acquired
+    qty_original: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Remaining quantity after sells (FIFO consumption)
+    qty_remaining: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Cost per share at acquisition (for CGT)
+    cost_per_share: Mapped[float] = mapped_column(Float, nullable=False)
+    # Fees allocated to this lot
+    fees: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Acquisition date (for holding period)
+    acquired_at: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Source event (transaction ID, corporate action ID, etc.)
+    source_event_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    # Source type: "buy", "bonus", "rights", "split"
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    # If this lot came from a corporate action
+    corporate_action_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("corporate_actions.id"), nullable=True, index=True
+    )
+    # For bonus/rights: original event reference
+    original_event_ref: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_lot_portfolio_symbol_acquired", "portfolio_id", "symbol", "acquired_at"),
+        Index("ix_lot_source_event", "source_event_id"),
+    )
+
+
 class AlertChannel(Base):
     """Notification channel for alerts (email, telegram, in-app)."""
     __tablename__ = "alert_channels"
@@ -822,6 +868,7 @@ __all__ = [
     "Note",
     "FeeTaxRate",
     "Holding",
+    "HoldingLot",
     "AlertChannel",
     "AlertRule",
     "AlertEvent",

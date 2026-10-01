@@ -44,6 +44,7 @@ from app.watchlist import routes as watchlist_routes
 from app.alerts import routes as alerts_routes
 from app.calculator import routes as calculator_routes
 from app.news import routes as news_routes
+from app.admin import routes as admin_routes
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,7 @@ app.include_router(quarterly_routes.router)
 app.include_router(ai_routes.router)
 app.include_router(realtime_routes.router)
 app.include_router(fundamentals_routes.router)
+app.include_router(admin_routes.router)
 
 
 @app.get("/", include_in_schema=False)

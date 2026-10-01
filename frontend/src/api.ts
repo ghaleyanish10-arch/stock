@@ -627,6 +627,42 @@ export const quarterly = {
     plain<QuarterlyResponse>(`/api/analytics/quarterly/${encodeURIComponent(symbol)}/history${qs({ limit })}`),
 };
 
+/* -- Admin: Fee/Tax Rates ------------------------------------------------- */
+
+export const admin = {
+  feeTaxRates: {
+    list: (params: { rate_type?: string; active_only?: boolean; limit?: number; offset?: number } = {}) =>
+      plain<{ total: number; rates: any[] }>(`/api/admin/fee-tax-rates${qs(params)}`),
+    create: (data: {
+      rate_type: string;
+      rate_value: number;
+      rate_unit: string;
+      applies_to: string;
+      description?: string;
+      source: string;
+      source_url?: string;
+      verification_status: string;
+      effective_from: string;
+      effective_to?: string;
+    }) =>
+      plain<any>("/api/admin/fee-tax-rates", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    get: (rateId: string) =>
+      plain<any>(`/api/admin/fee-tax-rates/${encodeURIComponent(rateId)}`),
+    update: (rateId: string, data: Record<string, any>) =>
+      plain<any>(`/api/admin/fee-tax-rates/${encodeURIComponent(rateId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    delete: (rateId: string) =>
+      plain<{ detail: string }>(`/api/admin/fee-tax-rates/${encodeURIComponent(rateId)}`, { method: "DELETE" }),
+    verify: (rateId: string) =>
+      plain<any>(`/api/admin/fee-tax-rates/${encodeURIComponent(rateId)}/verify`, { method: "POST" }),
+  },
+};
+
 /* -- Phase 5: AI -------------------------------------------------------- */
 
 export const ai = {

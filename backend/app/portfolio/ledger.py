@@ -4,20 +4,19 @@ This is the core of B1 - the ledger stores inputs only, and holdings
 are rebuilt by replaying all events in chronological order.
 """
 
-from __future__ import annotations
-
 from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, delete
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     Portfolio,
     Transaction,
     Holding,
+    HoldingLot,
     LedgerEvent,
     LedgerReplayLog,
     LedgerEventType,
@@ -108,10 +107,11 @@ class LedgerService:
         """Replay all ledger events for a portfolio to rebuild holdings.
         
         This is the core replay function. It:
-        1. Deletes all existing holdings for the portfolio
+        1. Deletes all existing holdings and lots for the portfolio
         2. Replays all non-reversed ledger events in date order
         3. Rebuilds holdings with correct WAC and realized P&L
-        4. Logs the replay operation
+        4. Rebuilds FIFO lots for holding period and CGT
+        5. Logs the replay operation
         """
         portfolio = session.get(Portfolio, portfolio_id)
         if not portfolio or portfolio.user_id != user_id:
@@ -142,9 +142,12 @@ class LedgerService:
                 .order_by(LedgerEvent.event_date, LedgerEvent.created_at)
             ))
 
-            # Delete existing holdings - they will be rebuilt
+            # Delete existing holdings and lots - they will be rebuilt
             session.execute(
                 Holding.__table__.delete().where(Holding.portfolio_id == portfolio_id)
+            )
+            session.execute(
+                HoldingLot.__table__.delete().where(HoldingLot.portfolio_id == portfolio_id)
             )
 
             # Replay state: tracks holdings and FIFO lots per symbol
@@ -155,7 +158,7 @@ class LedgerService:
                 "first_bought_at": None,
                 "last_transacted_at": None,
                 # FIFO lots for capital gains tax (holding period tracking)
-                "lots": [],  # list of {"qty": int, "cost": float, "date": date, "event_id": str}
+                "lots": [],  # list of HoldingLot objects
             })
 
             realized_pnl = 0.0
@@ -164,7 +167,7 @@ class LedgerService:
                 self._replay_event(session, portfolio_id, event, holdings_state)
                 realized_pnl += holdings_state[event.symbol].get("realized_pnl_delta", 0.0)
 
-            # Create Holding records from replayed state
+            # Create Holding and HoldingLot records from replayed state
             for symbol, state in holdings_state.items():
                 if state["quantity"] > 0:
                     holding = Holding(
@@ -177,6 +180,11 @@ class LedgerService:
                         last_transacted_at=state["last_transacted_at"],
                     )
                     session.add(holding)
+                    session.flush()
+                    
+                    # Create HoldingLot records
+                    for lot in state["lots"]:
+                        session.add(lot)
 
             # Update replay log
             replay_log.events_processed = len(events)
@@ -245,14 +253,20 @@ class LedgerService:
             state["total_cost"] = new_total_cost
             state["quantity"] = new_qty
 
-            # FIFO lot tracking
-            state["lots"].append({
-                "qty": qty,
-                "cost": price,
-                "fees": fees,
-                "date": event_date,
-                "event_id": event.id,
-            })
+            # Create HoldingLot for FIFO tracking
+            lot = HoldingLot(
+                portfolio_id=event.portfolio_id,
+                symbol=event.symbol,
+                qty_original=qty,
+                qty_remaining=qty,
+                cost_per_share=price,
+                fees=fees,
+                acquired_at=event_date.date().isoformat(),
+                source_event_id=event.id,
+                source_type="buy",
+                corporate_action_id=event.corporate_action_id,
+            )
+            state["lots"].append(lot)
 
             if state["first_bought_at"] is None:
                 state["first_bought_at"] = event_date
@@ -278,17 +292,18 @@ class LedgerService:
                     new_lots.append(lot)
                     continue
 
-                if lot["qty"] <= remaining:
+                if lot.qty_remaining <= remaining:
                     # Consume entire lot
-                    lot_pnl = (price - lot["cost"]) * lot["qty"]
+                    lot_pnl = (price - lot.cost_per_share) * lot.qty_remaining
                     realized_pnl_delta += lot_pnl
-                    remaining -= lot["qty"]
+                    remaining -= lot.qty_remaining
+                    lot.qty_remaining = 0
                 else:
                     # Partially consume lot
                     consumed_qty = remaining
-                    lot_pnl = (price - lot["cost"]) * consumed_qty
+                    lot_pnl = (price - lot.cost_per_share) * consumed_qty
                     realized_pnl_delta += lot_pnl
-                    lot["qty"] -= consumed_qty
+                    lot.qty_remaining -= consumed_qty
                     new_lots.append(lot)
                     remaining = 0
 
@@ -318,15 +333,20 @@ class LedgerService:
         state["avg_cost"] = state["total_cost"] / state["quantity"]
         state["last_transacted_at"] = event_date
 
-        # FIFO: add bonus shares as zero-cost lots
-        state["lots"].append({
-            "qty": bonus_qty,
-            "cost": 0.0,
-            "fees": 0.0,
-            "date": event_date,
-            "event_id": event.id,
-            "is_bonus": True,
-        })
+        # Create HoldingLot for bonus shares (zero cost)
+        lot = HoldingLot(
+            portfolio_id=event.portfolio_id,
+            symbol=event.symbol,
+            qty_original=bonus_qty,
+            qty_remaining=bonus_qty,
+            cost_per_share=0.0,
+            fees=0.0,
+            acquired_at=event_date.date().isoformat(),
+            source_event_id=event.id,
+            source_type="bonus",
+            corporate_action_id=event.corporate_action_id,
+        )
+        state["lots"].append(lot)
 
     def _replay_rights(
         self,
@@ -351,15 +371,20 @@ class LedgerService:
         state["quantity"] = new_qty
         state["last_transacted_at"] = event_date
 
-        # FIFO: add rights shares at subscription price
-        state["lots"].append({
-            "qty": rights_qty,
-            "cost": price,
-            "fees": fees,
-            "date": event_date,
-            "event_id": event.id,
-            "is_rights": True,
-        })
+        # Create HoldingLot for rights shares
+        lot = HoldingLot(
+            portfolio_id=event.portfolio_id,
+            symbol=event.symbol,
+            qty_original=rights_qty,
+            qty_remaining=rights_qty,
+            cost_per_share=price,
+            fees=fees,
+            acquired_at=event_date.date().isoformat(),
+            source_event_id=event.id,
+            source_type="rights",
+            corporate_action_id=event.corporate_action_id,
+        )
+        state["lots"].append(lot)
 
         if state["first_bought_at"] is None:
             state["first_bought_at"] = event_date
