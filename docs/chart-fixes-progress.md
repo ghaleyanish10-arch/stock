@@ -29,7 +29,7 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 | Item | Status | Commit | Notes |
 | --- | --- | --- | --- |
 | C1 CSS vars light+dark, setting | ✅ done | fd7f167 | `--up` green / `--down` red (light+dark); `[data-trend="nepse"]` restores red-up; topbar switch via `useTrendPalette()`, stored `sa.trend-palette`. |
-| C2 One colour function + documented rule | ✅ done | fd7f167 | `changeColor(delta, pal)` for body+wick+volume; rule setting `prev_close` (default) vs `open` in `frontend/src/colorRule.ts`, per browser, live re-colour on change. |
+| C2 One colour function + documented rule | ✅ done | fd7f167 | `changeColor(delta, pal)` for body+wick+volume; rule setting `prev_close` (default) vs `open` in `frontend/src/colorRule.ts`, per browser, live re-colour on change. Contract pinned by `frontend/scripts/check-color-rule.mjs` (18 hand-computed cases incl. gap-day disagreements) — logic lives in `frontend/src/chartColors.ts`. |
 | C3 Applied everywhere | ✅ done | fd7f167 | Header, chart, tooltip, volume bars read the vars. Existing table/heatmap classes already consume `--up/--down`, so they follow automatically. |
 | C4 NEPSE rule observation | ⏳ needs user | — | Default `prev_close` kept; user to confirm which rule NEPSE's chart uses on gap days. |
 
@@ -56,7 +56,7 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 
 | Item | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| F1 Parity/geometry/colour tests | ⬜ todo | — | |
+| F1 Parity/geometry/colour tests | 🔄 partial | this commit | Colour: `node scripts/check-color-rule.mjs` ✓ 18/18. Geometry/parity/registry pytest + parity page next. |
 | F2 Full backend tests + npm build | 🔄 partial | this commit | `npx tsc -b` clean, `npm run build` ✓ (722 kB bundle). Backend test suite rerun pending with E/F items. |
 | F3 Manual verification | 🔄 partial | this commit | Done: full-range no-clip view, green-up, RSI+Median instant plot, legend, tooltip, persistence across reload, market-closed badge. Remaining: 8 overlays + 4 osc sweep, basis toggle, colour-rule flip, 1W/YTD buttons in UI. |
 | F4 Final report | ⬜ todo | — | |

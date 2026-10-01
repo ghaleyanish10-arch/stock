@@ -61,39 +61,10 @@ import type { LiveQuote } from "../api";
 import { COLOR_RULE_LABELS, COLOR_RULE_EVENT, loadColorRule, storeColorRule } from "../colorRule";
 import type { ColorRule } from "../colorRule";
 
-/** Palette for canvas: CSS vars resolved to concrete colours at draw time. */
-export function trendPalette(): { up: string; down: string; flat: string } {
-  const cs = getComputedStyle(document.documentElement);
-  const get = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
-  return {
-    up: get("--up", "#26a69a"),
-    down: get("--down", "#ef5350"),
-    flat: get("--flat", "#787b86"),
-  };
-}
-
-/**
- * Sign -> colour. The only colour decision in the chart; body, wick and
- * volume bars all call this with the same value.
- */
-export function changeColor(
-  delta: number | null | undefined,
-  pal: { up: string; down: string; flat: string },
-): string {
-  if (delta == null || !Number.isFinite(delta) || delta === 0) return pal.flat;
-  return delta > 0 ? pal.up : pal.down;
-}
-
-/** The comparison value a candle's close is judged against, per the rule. */
-export function changeRef(
-  rule: ColorRule,
-  open: number,
-  prevClose: number | null,
-): number {
-  // First visible bar has no previous session inside the window: fall back to
-  // the intrabar rule for that one bar rather than inventing a close.
-  return rule === "open" || prevClose == null ? open : prevClose;
-}
+// Colour logic lives in ../chartColors so the colour contract is testable
+// without a DOM; imported here and re-exported for the chart's importers.
+import { trendPalette, changeColor, changeRef, alpha } from "../chartColors";
+export { trendPalette, changeColor, changeRef, alpha };
 
 /* -- live candle ------------------------------------------------------------ */
 
@@ -108,20 +79,6 @@ export interface LiveCandle {
 }
 
 /* -- hex -> rgba ------------------------------------------------------------ */
-
-/** Hex (#rgb/#rrggbb) -> rgba with the given alpha; other formats pass through. */
-function alpha(color: string, a: number): string {
-  const c = color.trim();
-  if (c.startsWith("#")) {
-    if (c.length === 4) {
-      return `rgba(${parseInt(c[1] + c[1], 16)},${parseInt(c[2] + c[2], 16)},${parseInt(c[3] + c[3], 16)},${a})`;
-    }
-    if (c.length === 7) {
-      return `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${a})`;
-    }
-  }
-  return c;
-}
 
 /* -- theme tokens ------------------------------------------------------------ */
 
