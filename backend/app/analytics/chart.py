@@ -135,6 +135,8 @@ from app.analytics.indicators import (
     price_channel,
     force_index,
     technical_ratings,
+    roc,
+    vwma,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
