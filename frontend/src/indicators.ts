@@ -111,7 +111,13 @@ export type IndicatorToken =
   | "choppiness"
   | "chop_zone"
   | "envelopes"
-  | "mass_index";
+  | "mass_index"
+  | "std_error"
+  | "std_error_bands"
+  | "vol_c2c"
+  | "vol_zero_trend"
+  | "vol_ohlc"
+  | "vol_index";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -550,6 +556,21 @@ export const INDICATORS: IndicatorDef[] = [
     desc: "SMA(20) with fixed 2% bands - price touching the upper band reads stretched to the upside, the lower band to the downside.",
   },
   { key: "mass_index", token: "mass_index", label: "Mass Index 25", color: "#6d4c41", pane: "osc", series: ["mass_index"], desc: "Sum of the range's EMA over its double-smoothed EMA (25 bars): a rise past 27 that falls back below 26.5 - the 'reversal bulge' - flags trend reversals." },
+  { key: "std_error", token: "std_error", label: "Standard Error 20", color: "#a1887f", pane: "trend", series: ["std_error_20"], desc: "Root-mean-square distance of price from its 20-bar regression line, in price units - a plain 'how linear was the trend' gauge." },
+  {
+    key: "std_error_bands",
+    token: "std_error_bands",
+    label: "Std Error Bands 20",
+    color: "#ffab91",
+    pane: "overlay",
+    series: ["seb_upper", "seb_middle", "seb_lower"],
+    colors: { seb_middle: "#8d6e63" },
+    desc: "Regression endpoint (LSMA 20) plus/minus two standard errors - bands tighten when price runs linear and widen on choppy moves.",
+  },
+  { key: "vol_c2c", token: "vol_c2c", label: "Volatility C2C 20", color: "#795548", pane: "osc", series: ["vol_c2c_20"], desc: "Annualized standard deviation of daily log returns (20 bars, 252-day year) - the plain close-to-close volatility, in percent." },
+  { key: "vol_zero_trend", token: "vol_zero_trend", label: "Volatility Zero Trend 20", color: "#827717", pane: "osc", series: ["vol_zero_trend_20"], desc: "Close-to-close volatility after removing the linear trend from log prices - a steady grind reports low, only back-and-forth counts." },
+  { key: "vol_ohlc", token: "vol_ohlc", label: "Volatility OHLC 20", color: "#5d4037", pane: "osc", series: ["vol_ohlc_20"], desc: "Garman-Klass estimator from open/high/low/close: uses the day's range as well as its open-close move, so it reads volatility more efficiently than close-to-close." },
+  { key: "vol_index", token: "vol_index", label: "Volatility Index (N/A)", color: "#9e9e9e", pane: "trend", series: [], desc: "Not applicable: a volatility index needs option-implied data, and NEPSE publishes no derivatives or options series - the backend reports this token as disabled rather than faking a value." },
 ];
 
 /** Default picker mix when nothing is stored. */

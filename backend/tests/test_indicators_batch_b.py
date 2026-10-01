@@ -61,6 +61,11 @@ from app.analytics.indicators import (
     choppiness,
     envelopes,
     mass_index,
+    standard_error,
+    standard_error_bands,
+    volatility_c2c,
+    volatility_ohlc,
+    volatility_zero_trend_c2c,
 )
 
 
@@ -787,3 +792,89 @@ class TestMassIndex:
         bars += [bar(10.0, 15.0, 5.0, 10.0) for _ in range(15)]  # range 10
         out = mass_index(bars, 9, 25)
         assert out[-1] > 25.0  # double-EMA lags the expansion -> ratio > 1
+
+
+# ---------------------------------------------------------------------------
+# Doc #39 Std Error; #40 SE Bands; #41-#43 volatility trio; #44 disabled
+# ---------------------------------------------------------------------------
+
+
+class TestStandardError:
+    def test_perfect_line_is_zero(self):
+        assert standard_error([1.0, 2.0, 3.0, 4.0, 5.0], 5)[4] == 0.0
+
+    def test_hand_residuals(self):
+        # fit a=0.8, b=1.2: residuals [0.2, 0, -0.2, -0.4, 0.4], SSE = 0.4,
+        # SE = sqrt(0.4 / 3) = 0.36515.
+        assert standard_error([1.0, 2.0, 3.0, 4.0, 6.0], 5)[4] == pytest.approx(0.36515, abs=1e-4)
+
+    def test_warmup(self):
+        assert all(v is None for v in standard_error([1.0, 2.0, 3.0], 5))
+
+
+class TestStandardErrorBands:
+    def test_hand_values(self):
+        closes = [1.0, 2.0, 3.0, 4.0, 6.0]
+        out = standard_error_bands(closes, 5, 2.0)
+        # middle = LSMA = 5.6; SE = 0.36515 -> bands at +-0.7303.
+        assert out["middle"][4] == pytest.approx(5.6)
+        assert out["upper"][4] == pytest.approx(5.6 + 0.73030, abs=1e-3)
+        assert out["lower"][4] == pytest.approx(5.6 - 0.73030, abs=1e-3)
+
+    def test_zero_error_bands_collapse(self):
+        out = standard_error_bands([1.0, 2.0, 3.0, 4.0, 5.0], 5, 2.0)
+        assert out["upper"][4] == out["middle"][4] == out["lower"][4]
+
+
+class TestVolatilityC2C:
+    def test_hand_value(self):
+        # log returns [+ln1.1, -ln1.1]: population sd = 0.0953102;
+        # x sqrt(252) x 100 = 151.31%.
+        out = volatility_c2c([100.0, 110.0, 100.0], 2)
+        assert out[2] == pytest.approx(151.31, abs=1e-2)
+
+    def test_steady_returns_are_zero(self):
+        closes = [100.0 * (1.01**i) for i in range(10)]
+        out = volatility_c2c(closes, 5)
+        assert out[9] == pytest.approx(0.0, abs=1e-6)  # float noise only
+
+    def test_warmup(self):
+        out = volatility_c2c([1.0, 2.0, 3.0], 5)
+        assert all(v is None for v in out)
+
+
+class TestVolatilityZeroTrend:
+    def test_hand_value(self):
+        # ln closes [4.60517, 4.70048, 4.60517]: linear fit is flat
+        # (slope 0), residuals sd = 0.044929 -> 71.32% annualized.
+        out = volatility_zero_trend_c2c([100.0, 110.0, 100.0], 3)
+        assert out[2] == pytest.approx(71.32, abs=1e-2)
+
+    def test_pure_trend_is_zero(self):
+        closes = [100.0 * (1.01**i) for i in range(12)]
+        out = volatility_zero_trend_c2c(closes, 6)
+        assert out[11] == pytest.approx(0.0, abs=1e-4)
+
+    def test_warmup(self):
+        assert all(v is None for v in volatility_zero_trend_c2c([1.0, 2.0], 5))
+
+
+class TestVolatilityOhlc:
+    def test_flat_is_genuine_zero(self):
+        bars = [flat_bar(10.0) for _ in range(22)]
+        assert volatility_ohlc(bars, 20)[21] == 0.0
+
+    def test_garman_klass_hand_value(self):
+        bars = [ranged_bar(10.0) for _ in range(21)]
+        out = volatility_ohlc(bars, 20)
+        # ln(H/L) = ln(11/9) = 0.200671, ln(C/O) = 0:
+        # term = 0.5 x 0.200671^2 = 0.0201345 -> sqrt(0.0201345 x 252) x 100.
+        assert out[20] == pytest.approx(225.25, abs=1e-1)
+
+    def test_warmup_and_gaps(self):
+        bars = [ranged_bar(10.0) for _ in range(20)] + [bar(None, 11.0, 9.0, 10.0)]
+        out = volatility_ohlc(bars, 20)
+        # First full window at idx19; the gap bar at idx20 voids that window.
+        assert out[18] is None
+        assert out[19] == pytest.approx(225.25, abs=1e-1)
+        assert out[20] is None

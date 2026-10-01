@@ -807,7 +807,14 @@ export type IndicatorKey =
   | "envelopes_upper"
   | "envelopes_middle"
   | "envelopes_lower"
-  | "mass_index";
+  | "mass_index"
+  | "std_error_20"
+  | "seb_upper"
+  | "seb_middle"
+  | "seb_lower"
+  | "vol_c2c_20"
+  | "vol_zero_trend_20"
+  | "vol_ohlc_20";
 
 export interface ChartRangeOption {
   value: string;
@@ -823,6 +830,8 @@ export interface ChartResponse {
   as_of: string;
   series: ChartSeries;
   indicators: Partial<Record<IndicatorKey, (number | null)[]>>;
+  /** Tokens requested but not computable for this market, with the reason. */
+  disabled?: Record<string, string>;
   /** Live-session merge report: whether today's poller quote is the last bar. */
   live?: {
     merged: boolean;

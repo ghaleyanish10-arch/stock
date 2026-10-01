@@ -3507,3 +3507,155 @@ def mass_index(
             continue
         out[i] = sum(float(v) for v in window)  # type: ignore[arg-type]
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #39-#44: Standard Error, Standard Error Bands, volatility
+# close-to-close / zero-trend / OHLC, Volatility Index (disabled)
+# ---------------------------------------------------------------------------
+
+
+def standard_error(
+    closes: Sequence[Optional[float]], period: int = 20
+) -> list[Optional[float]]:
+    """Standard Error (doc #39): root mean square distance from the fitted
+    regression line, per the doc's formula sqrt(sum(residual^2) / (N - 2)).
+
+    In price units. A perfectly linear window has SE exactly 0.0. Periods
+    below 3 have no residual degrees of freedom and raise; windows with gaps
+    are None.
+    """
+    if period <= 2:
+        raise ValueError("period must be at least 3 (N - 2 denominator)")
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(period - 1, len(closes)):
+        window = closes[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        wf = [float(v) for v in window]  # type: ignore[arg-type]
+        a, b = _linreg_coeffs(wf)
+        sse = sum((y - (a + b * x)) ** 2 for x, y in enumerate(wf))
+        out[i] = math.sqrt(sse / (period - 2))
+    return out
+
+
+def standard_error_bands(
+    closes: Sequence[Optional[float]], period: int = 20, mult: float = 2.0
+) -> dict[str, list[Optional[float]]]:
+    """Standard Error Bands (doc #40): regression endpoint plus/minus
+    `mult` x standard error over the same window.
+
+    Middle = the fitted line's value at the newest bar (the LSMA
+    construction); upper/lower = middle +- k * SE. Keys: 'upper', 'middle',
+    'lower'.
+    """
+    middle = linreg_endpoint(closes, period)
+    se = standard_error(closes, period)
+    upper: list[Optional[float]] = [
+        None if (m is None or s is None) else m + mult * s for m, s in zip(middle, se)
+    ]
+    lower: list[Optional[float]] = [
+        None if (m is None or s is None) else m - mult * s for m, s in zip(middle, se)
+    ]
+    return {"upper": upper, "middle": middle, "lower": lower}
+
+
+def _annualized(per_bar_sd: float, annualization: float) -> float:
+    """Scale a per-bar standard deviation to an annual percent.
+
+    sd * sqrt(annualization) * 100 - the annualization multiplies the
+    standard deviation by sqrt(252), it does not square it first.
+    """
+    return math.sqrt(annualization) * per_bar_sd * 100.0
+
+
+def volatility_c2c(
+    closes: Sequence[Optional[float]],
+    period: int = 20,
+    annualization: float = 252.0,
+) -> list[Optional[float]]:
+    """Volatility Close-to-Close (doc #41): annualized standard deviation of
+    log returns.
+
+    sigma = StdDev(ln(C_t / C_{t-1}), N) * sqrt(annualization), reported in
+    percent (252 trading days is the default year). A run of identical
+    returns has zero dispersion - a genuine 0.0, not a gap.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    log_rets: list[Optional[float]] = [None] * len(closes)
+    for i in range(1, len(closes)):
+        prev, cur = closes[i - 1], closes[i]
+        if prev is None or cur is None or prev <= 0 or cur <= 0:
+            continue
+        log_rets[i] = math.log(float(cur) / float(prev))  # type: ignore[arg-type]
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(period, len(closes)):
+        window = log_rets[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = _annualized(stdev([float(v) for v in window]), annualization)  # type: ignore[arg-type]
+    return out
+
+
+def volatility_zero_trend_c2c(
+    closes: Sequence[Optional[float]],
+    period: int = 20,
+    annualization: float = 252.0,
+) -> list[Optional[float]]:
+    """Volatility Zero Trend Close-to-Close (doc #42): close-to-close
+    volatility after stripping the linear trend from log prices.
+
+    Residuals of ln(C) against its best-fit line over the window, then
+    StdDev(residuals) * sqrt(annualization) in percent - a steady grind in
+    one direction reports near-zero volatility instead of a large one.
+    """
+    if period <= 2:
+        raise ValueError("period must be at least 3")
+    log_closes: list[Optional[float]] = [
+        None if (c is None or c <= 0) else math.log(float(c)) for c in closes
+    ]
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(period - 1, len(closes)):
+        window = log_closes[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        wf = [float(v) for v in window]  # type: ignore[arg-type]
+        a, b = _linreg_coeffs(wf)
+        residuals = [y - (a + b * x) for x, y in enumerate(wf)]
+        out[i] = _annualized(stdev(residuals), annualization)
+    return out
+
+
+def volatility_ohlc(
+    bars: Sequence[Bar], period: int = 20, annualization: float = 252.0
+) -> list[Optional[float]]:
+    """Volatility O-H-L-C (doc #43) via the Garman-Klass estimator.
+
+    The doc leaves the OHLC method open; this implementation uses
+    Garman-Klass: per bar, 0.5 * ln(H/L)^2 - (2 ln 2 - 1) * ln(C/O)^2,
+    averaged over the window and annualized: sqrt(mean * 252) in percent.
+    Uses only open/high/low/close, so it is more efficient than close-to-close
+    on the same data. A bar with a missing OHLC field or a non-positive price
+    is skipped; a completely flat window is a genuine 0.0.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    terms: list[Optional[float]] = []
+    for b in bars:
+        if None in (b.open, b.high, b.low, b.close):
+            terms.append(None)
+            continue
+        o, h, l, c = (float(b.open), float(b.high), float(b.low), float(b.close))  # type: ignore[arg-type]
+        if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+            terms.append(None)
+            continue
+        terms.append(0.5 * math.log(h / l) ** 2 - (2.0 * math.log(2.0) - 1.0) * math.log(c / o) ** 2)
+    out: list[Optional[float]] = [None] * len(bars)
+    for i in range(period - 1, len(bars)):
+        window = terms[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        # Garman-Klass terms are variance-style: sqrt(mean * ann) directly.
+        out[i] = math.sqrt(sum(window) / period * annualization) * 100.0  # type: ignore[type-var,arg-type]
+    return out

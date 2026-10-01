@@ -66,6 +66,11 @@ from app.analytics.indicators import (
     klinger_oscillator,
     macd,
     macd_on_valid,
+    standard_error,
+    standard_error_bands,
+    volatility_c2c,
+    volatility_ohlc,
+    volatility_zero_trend_c2c,
     alligator,
     fisher,
     kst,
@@ -598,6 +603,31 @@ async def chart(
         out_indicators["envelopes_lower"] = env["lower"]
     if "mass_index" in wanted:
         out_indicators["mass_index"] = mass_index(bars, 9, 25)
+    if "std_error" in wanted:
+        out_indicators["std_error_20"] = standard_error(w_closes, 20)
+    if "std_error_bands" in wanted:
+        seb = standard_error_bands(w_closes, 20, 2.0)
+        out_indicators["seb_upper"] = seb["upper"]
+        out_indicators["seb_middle"] = seb["middle"]
+        out_indicators["seb_lower"] = seb["lower"]
+    if "vol_c2c" in wanted:
+        out_indicators["vol_c2c_20"] = volatility_c2c(w_closes, 20, 252.0)
+    if "vol_zero_trend" in wanted:
+        out_indicators["vol_zero_trend_20"] = volatility_zero_trend_c2c(w_closes, 20, 252.0)
+    if "vol_ohlc" in wanted:
+        out_indicators["vol_ohlc_20"] = volatility_ohlc(bars, 20, 252.0)
+
+    # -- disabled indicators (not_applicable) --------------------------------
+    # Volatility Index: needs option-implied data. NEPSE publishes no
+    # derivatives or options series, so an implied-volatility index cannot be
+    # computed from daily OHLCV - reported as disabled, never faked.
+    disabled: dict[str, str] = {}
+    if "vol_index" in wanted:
+        disabled["vol_index"] = (
+            "not_applicable: a volatility index needs option-implied data; "
+            "NEPSE publishes no derivatives or options series, so it cannot "
+            "be computed from daily OHLCV."
+        )
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
@@ -666,6 +696,7 @@ async def chart(
         "as_of": latest,
         "series": window,
         "indicators": out_indicators,
+        "disabled": disabled,
         "live": {
             "merged": live_mode is not None,
             "mode": live_mode,
