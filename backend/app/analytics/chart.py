@@ -137,6 +137,7 @@ from app.analytics.indicators import (
     technical_ratings,
     roc,
     vwma,
+    vortex,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
