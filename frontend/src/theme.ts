@@ -10,7 +10,12 @@ import { useCallback, useEffect, useState } from "react";
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
 
+/** Up/down colour pairing. Default green-up/red-down; "nepse" is the legacy
+ * red-up convention, kept as a user setting (C1/C2 of the chart fix). */
+export type TrendPalette = "green-up" | "nepse";
+
 const KEY = "sa.theme";
+const TREND_KEY = "sa.trend-palette";
 
 function readPreference(): ThemePreference {
   try {
@@ -64,4 +69,36 @@ export function useTheme() {
   }, []);
 
   return { preference, resolved, setPreference, toggle };
+}
+
+/* -- trend palette (which colour means "up") ------------------------------ */
+
+function readTrendPalette(): TrendPalette {
+  try {
+    const stored = window.localStorage.getItem(TREND_KEY);
+    if (stored === "nepse" || stored === "green-up") return stored;
+  } catch {
+    // Storage unavailable; fall through to the default.
+  }
+  return "green-up";
+}
+
+function applyTrendPalette(p: TrendPalette): TrendPalette {
+  document.documentElement.setAttribute("data-trend", p === "nepse" ? "nepse" : "green-up");
+  return p;
+}
+
+export function useTrendPalette() {
+  const [palette, setPalette] = useState<TrendPalette>(() => applyTrendPalette(readTrendPalette()));
+
+  useEffect(() => {
+    applyTrendPalette(palette);
+    try {
+      window.localStorage.setItem(TREND_KEY, palette);
+    } catch {
+      // Non-fatal: the palette still applies for this page view.
+    }
+  }, [palette]);
+
+  return { palette, setPalette };
 }

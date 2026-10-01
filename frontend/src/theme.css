@@ -86,11 +86,13 @@
   --accent-soft: #e8f0fd;
   --accent-text: #ffffff;
 
-  /* NEPSE convention: red is up, green is down. */
-  --up: #c62828;
-  --up-soft: #fdeaea;
-  --down: #1b7f4b;
-  --down-soft: #e6f4ec;
+  /* Up/down: green is up, red is down (Western convention), switched on
+   * request. The old NEPSE red-up pairing is available via the trend palette
+   * setting below; --up/--down flip together so every component follows. */
+  --up: #1b7f4b;
+  --up-soft: #e6f4ec;
+  --down: #c62828;
+  --down-soft: #fdeaea;
   --flat: #5b6472;
   --flat-soft: #eef0f3;
 
@@ -143,10 +145,11 @@
   --accent-soft: #16243c;
   --accent-text: #0d1117;
 
-  --up: #ff6b6b;
-  --up-soft: #2d1618;
-  --down: #3fbf7f;
-  --down-soft: #12251b;
+  /* Dark theme: lighter tints for the same green-up/red-down rule. */
+  --up: #3fbf7f;
+  --up-soft: #12251b;
+  --down: #ff6b6b;
+  --down-soft: #2d1618;
   --flat: #9aa4b2;
   --flat-soft: #1c232c;
 
@@ -174,4 +177,22 @@
   --shadow-sm: 0 1px 3px rgb(0 0 0 / 40%);
   --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 45%);
   --shadow-lg: 0 12px 16px -4px rgb(0 0 0 / 50%);
+}
+
+/* -- trend palette setting ------------------------------------------------
+ * Default: green up / red down. The "nepse" alternative restores the old
+ * red-up pairing. Every component reads --up/--down, so this one attribute
+ * re-colours header, tables, ticker, treemap, chart, volume bars at once. */
+[data-trend="nepse"] {
+  --up: #c62828;
+  --up-soft: #fdeaea;
+  --down: #1b7f4b;
+  --down-soft: #e6f4ec;
+}
+
+[data-theme="dark"][data-trend="nepse"] {
+  --up: #ff6b6b;
+  --up-soft: #2d1618;
+  --down: #3fbf7f;
+  --down-soft: #12251b;
 }

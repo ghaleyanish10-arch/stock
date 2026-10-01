@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { archive, market } from "../api";
 import { useAuth } from "../auth";
-import { useTheme, type ThemePreference } from "../theme";
+import { useTheme, useTrendPalette, type ThemePreference } from "../theme";
 import { fmtDateTime } from "../format";
 import { CommandPalette } from "./CommandPalette";
 import { HighlightsTicker, IndexBar } from "./MarketBar";
@@ -59,6 +59,7 @@ const THEME_ORDER: ThemePreference[] = ["light", "dark", "system"];
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const { preference, resolved, setPreference } = useTheme();
+  const { palette, setPalette } = useTrendPalette();
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -207,6 +208,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <span className="theme-switch-text">{option}</span>
                 </button>
               ))}
+            </div>
+
+            <div className="seg-group trend-switch" role="group" aria-label="Up/down colours">
+              <button
+                type="button"
+                className={`seg-btn ${palette === "green-up" ? "active" : ""}`}
+                aria-pressed={palette === "green-up"}
+                onClick={() => setPalette("green-up")}
+                title="Green means up, red means down"
+              >
+                <span className="trend-dot trend-dot-up-green" aria-hidden="true" />
+                <span className="theme-switch-text">▲ green</span>
+              </button>
+              <button
+                type="button"
+                className={`seg-btn ${palette === "nepse" ? "active" : ""}`}
+                aria-pressed={palette === "nepse"}
+                onClick={() => setPalette("nepse")}
+                title="NEPSE convention: red means up, green means down"
+              >
+                <span className="trend-dot trend-dot-up-red" aria-hidden="true" />
+                <span className="theme-switch-text">▲ red</span>
+              </button>
             </div>
 
             {user ? (
