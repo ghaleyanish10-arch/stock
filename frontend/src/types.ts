@@ -734,7 +734,20 @@ export type IndicatorKey =
   | "fibf_618"
   | "vp_poc"
   | "vp_va_high"
-  | "vp_va_low";
+  | "vp_va_low"
+  /* Batch B: 57-indicator doc */
+  | "alma_9"
+  | "asi"
+  | "avg_price"
+  | "ema_cross_fast"
+  | "ema_cross_slow"
+  | "ema_cross_signal"
+  | "ma_cross_fast"
+  | "ma_cross_slow"
+  | "ma_cross_signal"
+  | "ma_ema_cross_fast"
+  | "ma_ema_cross_slow"
+  | "ma_ema_cross_signal";
 
 export interface ChartRangeOption {
   value: string;

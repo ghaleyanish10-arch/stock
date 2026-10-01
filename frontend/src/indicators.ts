@@ -72,7 +72,14 @@ export type IndicatorToken =
   | "fib_retrace"
   | "fib_extension"
   | "fib_fan"
-  | "volume_profile";
+  | "volume_profile"
+  /* Batch B: 57-indicator doc */
+  | "alma"
+  | "asi"
+  | "avg_price"
+  | "ema_cross"
+  | "ma_cross"
+  | "ma_ema_cross";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -343,6 +350,40 @@ export const INDICATORS: IndicatorDef[] = [
     series: ["vp_poc", "vp_va_high", "vp_va_low"],
     colors: { vp_poc: "#00838f", vp_va_high: "#4dd0e1", vp_va_low: "#4dd0e1" },
     desc: "Volume at each price level over the range (VPFR/VPVR share the computation): POC = the heaviest-traded price; value area = the 70% band around it. magnet in ranges, breakout zone outside.",
+  },
+  // Batch B: 57-indicator doc
+  { key: "alma", token: "alma", label: "ALMA 9", color: "#b39ddb", pane: "overlay", series: ["alma_9"], desc: "Arnaud Legoux MA - Gaussian-weighted average (9/0.85/6) that trims lag while staying smooth; price above it reads as short-term strength." },
+  { key: "asi", token: "asi", label: "Accumulative Swing Index", color: "#4dd0e1", pane: "trend", series: ["asi"], desc: "Wilder's cumulative swing score from open/high/low/close relationships; its slope tracks swing strength, divergences hint at fading moves." },
+  { key: "avg_price", token: "avg_price", label: "Average Price", color: "#ffb74d", pane: "overlay", series: ["avg_price"], desc: "(Open + High + Low + Close) / 4 - the candle's single mean price, useful as a smoothing reference for other series." },
+  {
+    key: "ema_cross",
+    token: "ema_cross",
+    label: "EMA Cross 9/21",
+    color: "#f48fb1",
+    pane: "overlay",
+    series: ["ema_cross_fast", "ema_cross_slow"],
+    colors: { ema_cross_fast: "#f48fb1", ema_cross_slow: "#9575cd" },
+    desc: "Fast EMA(9) against slow EMA(21): fast crossing up marks bullish momentum, crossing down bearish; whipsaws in sideways markets.",
+  },
+  {
+    key: "ma_cross",
+    token: "ma_cross",
+    label: "MA Cross 9/21",
+    color: "#80cbc4",
+    pane: "overlay",
+    series: ["ma_cross_fast", "ma_cross_slow"],
+    colors: { ma_cross_fast: "#80cbc4", ma_cross_slow: "#a1887f" },
+    desc: "Fast SMA(9) against slow SMA(21) - the classic crossover trend signal, slower to react than the EMA version.",
+  },
+  {
+    key: "ma_ema_cross",
+    token: "ma_ema_cross",
+    label: "MA/EMA Cross 9/21",
+    color: "#ce93d8",
+    pane: "overlay",
+    series: ["ma_ema_cross_fast", "ma_ema_cross_slow"],
+    colors: { ma_ema_cross_fast: "#ce93d8", ma_ema_cross_slow: "#90caf9" },
+    desc: "SMA(9) against EMA(21): mixes a flat-weighted and a recency-weighted average, so crosses confirm when both views of trend agree.",
   },
 ];
 

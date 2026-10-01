@@ -2294,3 +2294,315 @@ def fibonacci_fan(bars: Sequence[Bar]) -> dict[str, list[Optional[float]]]:
         for key, k in zip(keys, ratios):
             out[key][i] = p_from + dy * k * t
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B primitives: shared building blocks for the 57-indicator doc
+# ---------------------------------------------------------------------------
+
+
+def rma(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Wilder's smoothing (RMA / SMMA), seeded with an SMA of the first `period`.
+
+    rma_t = (rma_{t-1} * (N - 1) + value_t) / N - the smoothing behind
+    Wilder's ATR/ADX, the SMMA entry of the notes and the Alligator's jaw,
+    teeth and lips. Runs of consecutive non-`None` values are smoothed
+    independently and the warm-up window is `None`, mirroring `ema`.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: list[Optional[float]] = [None] * len(values)
+    run_start: Optional[int] = None
+    for i, v in enumerate(values):
+        if v is None:
+            run_start = None  # a gap breaks the run
+            continue
+        if run_start is None:
+            run_start = i
+        offset = i - run_start
+        if offset < period - 1:
+            continue  # still warming up
+        if offset == period - 1:
+            out[i] = sum(float(x) for x in values[run_start : i + 1]) / period  # type: ignore[arg-type]
+        else:
+            prev = out[i - 1]
+            if prev is None:  # pragma: no cover - unreachable within a run
+                continue
+            out[i] = (prev * (period - 1) + float(v)) / period
+    return out
+
+
+def highest(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Rolling maximum of the last `period` values.
+
+    Same gap rule as `sma`: a window containing a missing value yields `None`,
+    and the warm-up window is `None` too.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = max(float(v) for v in window)  # type: ignore[arg-type]
+    return out
+
+
+def lowest(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Rolling minimum of the last `period` values; gap rules as `highest`."""
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = min(float(v) for v in window)  # type: ignore[arg-type]
+    return out
+
+
+def _linreg_coeffs(ys: Sequence[float]) -> tuple[float, float]:
+    """Least-squares fit y = a + b*x with x = 0..n-1. Returns (a, b)."""
+    n = len(ys)
+    if n < 2:
+        raise ValueError("need at least two points for a linear fit")
+    mean_x = (n - 1) / 2.0
+    mean_y = sum(ys) / n
+    sxx = sum((x - mean_x) ** 2 for x in range(n))
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(range(n), ys))
+    b = sxy / sxx
+    a = mean_y - b * mean_x
+    return a, b
+
+
+def linreg_endpoint(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Linear-regression curve: fitted value at the window's end (LSMA).
+
+    Fits y = a + b*x over each window of `period` non-None values and reports
+    a + b*(period - 1) - the value the fitted line takes at the newest bar.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        a, b = _linreg_coeffs([float(v) for v in window])  # type: ignore[arg-type]
+        out[i] = a + b * (period - 1)
+    return out
+
+
+def linreg_slope(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Slope of the least-squares line over each trailing window.
+
+    Positive when the series trends up, negative when down; units are price
+    per bar. A perfectly flat window slopes 0.0 - a genuine zero, not a gap.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        _, b = _linreg_coeffs([float(v) for v in window])  # type: ignore[arg-type]
+        out[i] = b
+    return out
+
+
+def percentrank(values: Sequence[Optional[float]], period: int) -> list[Optional[float]]:
+    """Percent rank of the current value inside its trailing window (0-100).
+
+    Counts how many of the window's other values are <= the current one and
+    scales by (period - 1), so the window's minimum ranks 0.0 and its maximum
+    ranks 100.0. `None` while the window is incomplete or contains a gap.
+    Used by Connors RSI's percent-rank-of-ROC leg.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        cur = float(window[-1])  # type: ignore[arg-type]
+        below = sum(1 for v in window[:-1] if float(v) <= cur)  # type: ignore[arg-type]
+        out[i] = below / (period - 1) * 100.0
+    return out
+
+
+def hl2_series(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Median price per bar: (H + L) / 2; `None` when either is missing."""
+    out: list[Optional[float]] = []
+    for b in bars:
+        if b.high is None or b.low is None:
+            out.append(None)
+        else:
+            out.append((float(b.high) + float(b.low)) / 2.0)
+    return out
+
+
+def hlc3_series(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Typical price per bar: (H + L + C) / 3; `None` when any is missing."""
+    out: list[Optional[float]] = []
+    for b in bars:
+        if b.high is None or b.low is None or b.close is None:
+            out.append(None)
+        else:
+            out.append((float(b.high) + float(b.low) + float(b.close)) / 3.0)
+    return out
+
+
+def ohlc4_series(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Average price per bar: (O + H + L + C) / 4; `None` when any is missing."""
+    out: list[Optional[float]] = []
+    for b in bars:
+        if b.open is None or b.high is None or b.low is None or b.close is None:
+            out.append(None)
+        else:
+            out.append((float(b.open) + float(b.high) + float(b.low) + float(b.close)) / 4.0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #1-#6: ALMA, ASI, Average Price, EMA cross, MA cross, MA/EMA cross
+# ---------------------------------------------------------------------------
+
+
+def alma(
+    values: Sequence[Optional[float]],
+    period: int = 9,
+    offset: float = 0.85,
+    sigma: float = 6.0,
+) -> list[Optional[float]]:
+    """Arnaud Legoux Moving Average: Gaussian-weighted mean that trades lag
+    for smoothness.
+
+    Window weights w_i = exp(-((i - m)^2) / (2 s^2)) with m = offset *
+    (period - 1) and s = period / sigma, i running oldest -> newest; the value
+    is the w-weighted mean of the window. Defaults are the common 9 / 0.85 / 6
+    setting. On a constant series ALMA equals that constant. `None` during the
+    warm-up and for windows containing a gap, as everywhere here.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    m = offset * (period - 1)
+    s = period / sigma
+    denom = 2.0 * s * s
+    weights = [math.exp(-((i - m) ** 2) / denom) for i in range(period)]
+    wsum = sum(weights)
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = sum(w * float(v) for w, v in zip(weights, window)) / wsum  # type: ignore[arg-type]
+    return out
+
+
+def asi(bars: Sequence[Bar], limit_move: Optional[float] = None) -> list[Optional[float]]:
+    """Accumulative Swing Index (Wilder), cumulative across the series.
+
+    Per bar (needs the current and previous session's OHLC):
+      delta_c = C_t - C_{t-1};  body_t = C_t - O_t;  body_prev = C_{t-1} - O_{t-1}
+      K = max(|H_t - C_{t-1}|, |L_t - C_{t-1}|)
+      R by dominant leg: H_t - C_{t-1} strictly largest ->
+          R = (H_t - C_{t-1}) - 0.5 (L_t - C_{t-1}) + 0.25 body_prev;
+        L_t - C_{t-1} strictly largest ->
+          R = (L_t - C_{t-1}) - 0.5 (H_t - C_{t-1}) + 0.25 body_prev;
+        otherwise (including ties) -> R = (H_t - L_t) + 0.25 body_prev.
+      SI = 50 * (delta_c + 0.5 body_t + 0.25 body_prev) / R, optionally * K/T
+      when a commodity-style `limit_move` T is supplied. ASI accumulates SI.
+
+    The doc's formula is a simplified variant and says implementations vary;
+    this is the standard Wilder construction. NEPSE equities have no daily
+    price limit constant, so `limit_move` defaults to None (K/T factor = 1).
+    A bar whose inputs are missing or whose R == 0 contributes `None` and
+    leaves the accumulator unchanged. The series starts at 0.0 the same way
+    OBV starts at 0: a genuine cumulative base, not a filled value.
+    """
+    n = len(bars)
+    out: list[Optional[float]] = [None] * n
+    acc = 0.0
+    for i in range(1, n):
+        b, p = bars[i], bars[i - 1]
+        if None in (b.open, b.high, b.low, b.close, p.open, p.high, p.low, p.close):
+            continue
+        o, h, l, c = (float(b.open), float(b.high), float(b.low), float(b.close))  # type: ignore[arg-type]
+        po, ph, pl, pc = (float(p.open), float(p.high), float(p.low), float(p.close))  # type: ignore[arg-type]
+        hc = h - pc
+        lc = l - pc
+        body_prev = pc - po
+        if hc > lc and hc > abs(body_prev):
+            r = hc - 0.5 * lc + 0.25 * body_prev
+        elif lc > hc and lc > abs(body_prev):
+            r = lc - 0.5 * hc + 0.25 * body_prev
+        else:
+            r = (h - l) + 0.25 * body_prev
+        if r == 0:
+            continue
+        si = 50.0 * ((c - pc) + 0.5 * (c - o) + 0.25 * body_prev) / r
+        if limit_move:
+            si *= max(abs(hc), abs(lc)) / limit_move
+        acc += si
+        out[i] = acc
+    return out
+
+
+def average_price(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Average Price: (O + H + L + C) / 4, the doc's four-price mean."""
+    return ohlc4_series(bars)
+
+
+def _cross_signal(
+    fast: Sequence[Optional[float]], slow: Sequence[Optional[float]]
+) -> list[Optional[float]]:
+    """+1.0 on the bar `fast` crosses above `slow`, -1.0 below, else None.
+
+    A cross needs both series defined on this bar and the previous one; equal
+    values count as 'not crossed' until they strictly separate.
+    """
+    n = min(len(fast), len(slow))
+    out: list[Optional[float]] = [None] * n
+    for i in range(1, n):
+        f0, s0, f1, s1 = fast[i - 1], slow[i - 1], fast[i], slow[i]
+        if None in (f0, s0, f1, s1):
+            continue
+        if f0 <= s0 and f1 > s1:  # type: ignore[operator]
+            out[i] = 1.0
+        elif f0 >= s0 and f1 < s1:  # type: ignore[operator]
+            out[i] = -1.0
+    return out
+
+
+def ema_cross(
+    closes: Sequence[Optional[float]], fast_period: int = 9, slow_period: int = 21
+) -> dict[str, list[Optional[float]]]:
+    """EMA crossover: EMA(fast) vs EMA(slow) plus per-bar cross markers.
+
+    The doc: 'signal when Fast EMA crosses Slow EMA'. Markers are +1.0 on the
+    bullish cross bar, -1.0 on the bearish one, `None` elsewhere.
+    """
+    fast = ema_on_valid(closes, fast_period)
+    slow = ema_on_valid(closes, slow_period)
+    return {"fast": fast, "slow": slow, "signal": _cross_signal(fast, slow)}
+
+
+def ma_cross(
+    closes: Sequence[Optional[float]], fast_period: int = 9, slow_period: int = 21
+) -> dict[str, list[Optional[float]]]:
+    """SMA crossover: MA(fast) vs MA(slow) plus per-bar cross markers."""
+    fast = sma_on_valid(closes, fast_period)
+    slow = sma_on_valid(closes, slow_period)
+    return {"fast": fast, "slow": slow, "signal": _cross_signal(fast, slow)}
+
+
+def ma_ema_cross(
+    closes: Sequence[Optional[float]], fast_period: int = 9, slow_period: int = 21
+) -> dict[str, list[Optional[float]]]:
+    """MA with EMA cross: SMA(fast) against EMA(slow) plus cross markers."""
+    fast = sma_on_valid(closes, fast_period)
+    slow = ema_on_valid(closes, slow_period)
+    return {"fast": fast, "slow": slow, "signal": _cross_signal(fast, slow)}

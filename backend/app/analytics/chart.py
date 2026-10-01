@@ -26,7 +26,10 @@ from app.analytics.indicators import (
     accumulation_distribution_line,
     adx,
     aroon,
+    alma,
+    asi,
     atr,
+    average_price,
     awesome_oscillator,
     bollinger,
     bollinger_on_valid,
@@ -41,6 +44,7 @@ from app.analytics.indicators import (
     donchian,
     ease_of_movement,
     ema,
+    ema_cross,
     ema_on_valid,
     fibonacci_extension,
     fibonacci_fan,
@@ -53,6 +57,8 @@ from app.analytics.indicators import (
     klinger_oscillator,
     macd,
     macd_on_valid,
+    ma_cross,
+    ma_ema_cross,
     money_flow_index,
     momentum,
     obv,
@@ -447,6 +453,29 @@ async def chart(
         out_indicators["vp_poc"] = [vp["poc"]] * len(dates_w)
         out_indicators["vp_va_high"] = [vp["va_high"]] * len(dates_w)
         out_indicators["vp_va_low"] = [vp["va_low"]] * len(dates_w)
+
+    # -- Batch B doc additions -----------------------------------------------
+    if "alma" in wanted:
+        out_indicators["alma_9"] = alma(w_closes, 9)
+    if "asi" in wanted:
+        out_indicators["asi"] = asi(bars)
+    if "avg_price" in wanted:
+        out_indicators["avg_price"] = average_price(bars)
+    if "ema_cross" in wanted:
+        ec = ema_cross(w_closes, 9, 21)
+        out_indicators["ema_cross_fast"] = ec["fast"]
+        out_indicators["ema_cross_slow"] = ec["slow"]
+        out_indicators["ema_cross_signal"] = ec["signal"]
+    if "ma_cross" in wanted:
+        mc = ma_cross(w_closes, 9, 21)
+        out_indicators["ma_cross_fast"] = mc["fast"]
+        out_indicators["ma_cross_slow"] = mc["slow"]
+        out_indicators["ma_cross_signal"] = mc["signal"]
+    if "ma_ema_cross" in wanted:
+        mec = ma_ema_cross(w_closes, 9, 21)
+        out_indicators["ma_ema_cross_fast"] = mec["fast"]
+        out_indicators["ma_ema_cross_slow"] = mec["slow"]
+        out_indicators["ma_ema_cross_signal"] = mec["signal"]
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
