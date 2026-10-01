@@ -74,6 +74,10 @@ from app.analytics.indicators import (
     ratio,
     spread,
     compare,
+    median_price,
+    typical_price,
+    price_channel,
+    force_index,
 )
 
 
@@ -1130,3 +1134,115 @@ class TestCompare:
     def test_invalid_mode(self):
         with pytest.raises(ValueError):
             compare([1.0], [2.0], "invalid")
+
+
+# ---------------------------------------------------------------------------
+# Doc #53 Median Price; #54 Typical Price; #55 Price Channel; #56 Force Index
+# ---------------------------------------------------------------------------
+
+
+class TestMedianPrice:
+    def test_hand_values(self):
+        bars = [
+            bar(10.0, 12.0, 8.0, 11.0),  # (12+8)/2 = 10.0
+            bar(10.0, 11.0, 9.0, 10.0),  # (11+9)/2 = 10.0
+        ]
+        assert median_price(bars) == [10.0, 10.0]
+
+    def test_missing_h_or_l_is_none(self):
+        bars = [bar(10.0, None, 8.0, 11.0), bar(10.0, 11.0, None, 10.0)]
+        out = median_price(bars)
+        assert out == [None, None]
+
+
+class TestTypicalPrice:
+    def test_hand_values(self):
+        bars = [
+            bar(10.0, 12.0, 8.0, 11.0),  # (12+8+11)/3 = 10.333...
+            bar(10.0, 11.0, 9.0, 10.0),  # (11+9+10)/3 = 10.0
+        ]
+        out = typical_price(bars)
+        assert out[0] == pytest.approx(10.3333, abs=1e-3)
+        assert out[1] == 10.0
+
+    def test_missing_any_ohlc_is_none(self):
+        bars = [bar(10.0, None, 8.0, 11.0), bar(10.0, 11.0, 9.0, None)]
+        out = typical_price(bars)
+        assert out == [None, None]
+
+
+class TestPriceChannel:
+    def test_basic_and_warmup(self):
+        # 30 bars with rising H/L/C
+        bars = [bar(100.0 + i, 102.0 + i, 98.0 + i, 101.0 + i) for i in range(30)]
+        upper, lower, middle = price_channel(bars, 20)
+        # First 19 bars (index 0-18) -> warmup = None
+        assert all(u is None for u in upper[:19])
+        assert all(l is None for l in lower[:19])
+        assert all(m is None for m in middle[:19])
+        # At index 19: window 0..19, highs max = 102+19=121.0, lows min = 98.0 (at index 0)
+        assert upper[19] == pytest.approx(121.0)
+        assert lower[19] == pytest.approx(98.0)
+        assert middle[19] == pytest.approx(109.5)
+
+    def test_include_current_false(self):
+        bars = [bar(100.0, 102.0, 98.0, 101.0) for _ in range(21)]
+        upper, lower, middle = price_channel(bars, 20, include_current=False)
+        # With include_current=False, window is 0..19 (20 bars), current bar excluded
+        # Since all bars identical, upper=102, lower=98, middle=100
+        assert upper[20] == pytest.approx(102.0)
+        assert lower[20] == pytest.approx(98.0)
+        assert middle[20] == pytest.approx(100.0)
+
+    def test_missing_h_or_l_is_none(self):
+        bars = [bar(100.0, 102.0, 98.0, 101.0)]
+        bars[0] = bar(100.0, None, 98.0, 101.0)
+        upper, lower, middle = price_channel(bars, 20)
+        assert upper[0] is None
+        assert lower[0] is None
+        assert middle[0] is None
+
+
+class TestForceIndex:
+    def test_hand_values(self):
+        # raw = (C - C_prev) * V
+        # Day 1: (11-10)*1000 = 1000
+        # Day 2: (12-11)*2000 = 2000
+        bars = [
+            bar(10.0, 11.0, 9.0, 10.0, 1000.0),
+            bar(11.0, 12.0, 10.0, 11.0, 1000.0),
+            bar(11.5, 12.5, 10.5, 12.0, 2000.0),
+        ]
+        raw = [(c - 10.0) * 1000.0 for c in [11.0, 12.0]]
+        # EMA period 13, but only 2 raw values -> all None
+        out = force_index(bars, 13)
+        assert all(v is None for v in out)
+
+    def test_ema_output(self):
+        # Need enough data for EMA to produce values
+        bars = [
+            bar(10.0 + i * 0.1, 11.0, 9.0, 10.0 + i * 0.1, 1000.0)
+            for i in range(30)
+        ]
+        out = force_index(bars, 13)
+        # EMA period 13, warmup = 12, first valid at index 13
+        assert all(v is None for v in out[:13])
+        assert out[13] is not None
+        # Force index should be positive for uptrend
+        assert out[13] > 0
+
+    def test_missing_volume_is_none(self):
+        bars = [
+            bar(10.0, 11.0, 9.0, 10.0, 1000.0),
+            bar(11.0, 12.0, 10.0, 11.0, None),
+        ]
+        out = force_index(bars, 2)
+        assert out[1] is None
+
+    def test_missing_close_is_none(self):
+        bars = [
+            bar(10.0, 11.0, 9.0, 10.0, 1000.0),
+            bar(11.0, 12.0, 10.0, None, 1000.0),
+        ]
+        out = force_index(bars, 2)
+        assert out[1] is None

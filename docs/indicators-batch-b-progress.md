@@ -64,10 +64,10 @@
 | 50 | Ratio | Comparison | ✅ Done | 333d15f | 4 | |
 | 51 | Spread | Comparison | ✅ Done | 333d15f | 2 | |
 | 52 | Compare | Comparison | ✅ Done | 333d15f | 4 | |
-| 53 | Median Price | Price | ⏳ Not Started | - | - | |
-| 54 | Typical Price | Price | ⏳ Not Started | - | - | |
-| 55 | Price Channel | Price | ⏳ Not Started | - | - | |
-| 56 | Elder's Force Index | Specialized | ⏳ Not Started | - | - | |
+| 53 | Median Price | Price | ✅ Done | **current** | 2 | |
+| 54 | Typical Price | Price | ✅ Done | **current** | 2 | |
+| 55 | Price Channel | Price | ✅ Done | **current** | 3 | |
+| 56 | Elder's Force Index | Specialized | ✅ Done | **current** | 4 | |
 | 57 | Technical Ratings | Specialized | ⏳ Not Started | - | - | |
 
 ---

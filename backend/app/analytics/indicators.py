@@ -3887,3 +3887,85 @@ def compare(
     else:
         raise ValueError("mode must be 'rebase' or 'percent'")
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #53-#56: Median Price, Typical Price, Price Channel,
+# Elder's Force Index
+# ---------------------------------------------------------------------------
+
+
+def median_price(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Median Price (doc #53): (H + L) / 2.
+
+    Simple midpoint of the day's range. None if H or L is missing.
+    """
+    out: list[Optional[float]] = [None] * len(bars)
+    for i, b in enumerate(bars):
+        if b.high is not None and b.low is not None:
+            out[i] = (float(b.high) + float(b.low)) / 2.0
+    return out
+
+
+def typical_price(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Typical Price (doc #54): (H + L + C) / 3.
+
+    The standard typical price used by many indicators. None if any of
+    H, L, C is missing.
+    """
+    out: list[Optional[float]] = [None] * len(bars)
+    for i, b in enumerate(bars):
+        if b.high is not None and b.low is not None and b.close is not None:
+            out[i] = (float(b.high) + float(b.low) + float(b.close)) / 3.0
+    return out
+
+
+def price_channel(
+    bars: Sequence[Bar], period: int = 20, include_current: bool = True
+) -> tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]]]:
+    """Price Channel (doc #55): returns `(upper, lower, middle)`.
+
+    Upper = HIGHEST(H, N); Lower = LOWEST(L, N); Middle = (Upper + Lower) / 2.
+    Window includes the current bar by default (param `include_current`).
+    Returns None during warm-up and for windows with missing H/L.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    n = len(bars)
+    upper: list[Optional[float]] = [None] * n
+    lower: list[Optional[float]] = [None] * n
+    middle: list[Optional[float]] = [None] * n
+    for i in range(n):
+        end = i + 1 if include_current else i
+        start = end - period
+        if start < 0:
+            continue
+        window = bars[start:end]
+        highs = [b.high for b in window]
+        lows = [b.low for b in window]
+        if any(h is None for h in highs) or any(l is None for l in lows):
+            continue
+        hi = max(float(h) for h in highs if h is not None)
+        lo = min(float(l) for l in lows if l is not None)
+        upper[i] = hi
+        lower[i] = lo
+        middle[i] = (hi + lo) / 2.0
+    return upper, lower, middle
+
+
+def force_index(bars: Sequence[Bar], period: int = 13) -> list[Optional[float]]:
+    """Elder's Force Index (doc #56): EMA-smoothed (C_t - C_{t-1}) * V_t.
+
+    Direction times magnitude times participation. The raw 1-period force is
+    None whenever the close, the previous close or the volume is missing; the
+    EMA smoothing resumes after the gap, per the shared ema rules.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    raw: list[Optional[float]] = [None] * len(bars)
+    for i in range(1, len(bars)):
+        cur, prev = bars[i], bars[i - 1]
+        if cur.close is None or prev.close is None or cur.volume is None:
+            continue
+        raw[i] = (float(cur.close) - float(prev.close)) * float(cur.volume)
+    return ema(raw, period)

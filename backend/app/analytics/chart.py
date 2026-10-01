@@ -130,6 +130,9 @@ from app.analytics.indicators import (
     ratio,
     spread,
     compare,
+    median_price,
+    typical_price,
+    price_channel,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
@@ -758,6 +761,19 @@ async def chart(
             for pos, i in enumerate(compare_pairs_idx):
                 compare_aligned[i] = compare_vals[pos]
             out_indicators["compare"] = compare_aligned
+
+    # -- Batch B doc #53-#56 ----------------------------------------------------
+    if "median_price" in wanted:
+        out_indicators["median_price"] = median_price(bars)
+    if "typical_price" in wanted:
+        out_indicators["typical_price"] = typical_price(bars)
+    if "price_channel" in wanted:
+        pc_up, pc_lo, pc_mid = price_channel(bars, 20)
+        out_indicators["price_channel_upper"] = pc_up
+        out_indicators["price_channel_lower"] = pc_lo
+        out_indicators["price_channel_middle"] = pc_mid
+    if "force_index" in wanted:
+        out_indicators["force_index_13"] = force_index(bars, 13)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
