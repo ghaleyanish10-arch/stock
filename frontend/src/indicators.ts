@@ -101,7 +101,12 @@ export type IndicatorToken =
   | "connors_rsi"
   | "coppock"
   | "fisher"
-  | "kst";
+  | "kst"
+  | "dpo"
+  | "smi_ergodic"
+  | "rci"
+  | "price_osc"
+  | "rvi_volatility";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -495,6 +500,28 @@ export const INDICATORS: IndicatorDef[] = [
   { key: "coppock", token: "coppock", label: "Coppock Curve", color: "#ffb300", pane: "osc", series: ["coppock"], desc: "WMA(ROC(14) + ROC(11), 10) - a long-horizon momentum curve; its classic signal is the first upturn after dipping below zero." },
   { key: "fisher", token: "fisher", label: "Fisher Transform 9", color: "#7e57c2", pane: "osc", series: ["fisher_9"], desc: "Maps the close's position in its 9-bar range through a log transform, sharpening turning points; crossings of its smoothed value time reversals." },
   { key: "kst", token: "kst", label: "KST", color: "#26a69a", pane: "osc", series: ["kst"], desc: "Know Sure Thing: weighted sum of four smoothed ROCs (10/15/20/30) - blends short and long momentum into one cycle gauge; zero-line crosses mark regime shifts." },
+  { key: "dpo", token: "dpo", label: "DPO 21", color: "#ff7043", pane: "osc", series: ["dpo_21"], desc: "Detrended Price Oscillator: price shifted back N/2+1 bars minus the SMA(21) - strips the dominant cycle so shorter swings stand out." },
+  {
+    key: "smi_ergodic",
+    token: "smi_ergodic",
+    label: "SMI Ergodic 5/5",
+    color: "#5c6bc0",
+    pane: "osc",
+    series: ["smi_ergodic", "smi_ergodic_signal"],
+    colors: { smi_ergodic: "#5c6bc0", smi_ergodic_signal: "#ffb74d" },
+    desc: "Double-smoothed price change over double-smoothed absolute change, with its EMA(5) signal - value/signal crosses time momentum turns.",
+  },
+  { key: "rci", token: "rci", label: "RCI 14", color: "#66bb6a", pane: "osc", series: ["rci_14"], desc: "Rank Correlation Index: Spearman correlation between time and price rank over 14 bars, -100..+100 - near +100 means every bar a new high, near -100 every bar a new low." },
+  {
+    key: "price_osc",
+    token: "price_osc",
+    label: "Price Oscillator 10/30",
+    color: "#ec407a",
+    pane: "osc",
+    series: ["price_osc_pct"],
+    desc: "SMA(10) minus SMA(30), shown as a percent of the slow MA (absolute form in the payload: price_osc_abs) - a slow, readable momentum gauge.",
+  },
+  { key: "rvi_volatility", token: "rvi_volatility", label: "Relative Volatility Index", color: "#8d6e63", pane: "osc", series: ["rvi_volatility_14"], desc: "Chande's RSI logic applied to standard deviation: volatility counted on up days vs down days, 0-100. Above 50 volatility skews bullish, below 50 bearish." },
 ];
 
 /** Default picker mix when nothing is stored. */

@@ -3202,3 +3202,145 @@ def kst(
         else:
             out[i] = total
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #29-#33: DPO, SMI Ergodic, RCI, Price Oscillator,
+# Relative Volatility Index
+# ---------------------------------------------------------------------------
+
+
+def dpo(closes: Sequence[Optional[float]], period: int = 21) -> list[Optional[float]]:
+    """Detrended Price Oscillator (doc #29): price shifted back N/2 + 1 bars
+    minus the SMA(N).
+
+    out[i] = close[i - (N // 2 + 1)] - SMA(N)[i]. The deliberate misalignment
+    removes the dominant cycle so shorter swings stand out; values are None
+    until both the shifted close and the SMA exist.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    shift = period // 2 + 1
+    ma = sma(closes, period)
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(shift, len(closes)):
+        p = closes[i - shift]
+        if p is None or ma[i] is None:
+            continue
+        out[i] = float(p) - float(ma[i])  # type: ignore[arg-type]
+    return out
+
+
+def smi_ergodic(
+    closes: Sequence[Optional[float]], long_period: int = 5, short_period: int = 5
+) -> dict[str, list[Optional[float]]]:
+    """SMI Ergodic (doc #30): double-smoothed price change over double-smoothed
+    absolute price change, plus its EMA signal line.
+
+    value = 100 * EMA(EMA(dC, r), s) / EMA(EMA(|dC|, r), s); signal =
+    EMA(value, 5) - the doc names both an indicator and an oscillator form,
+    which in practice is value and value-minus-signal; both series ship.
+    This is TSI construction at (5, 5); the name is kept because the doc
+    lists it separately.
+    """
+    value = tsi(closes, long_period, short_period)
+    signal = ema_on_valid(value, 5)
+    return {"value": value, "signal": signal}
+
+
+def rci(closes: Sequence[Optional[float]], period: int = 14) -> list[Optional[float]]:
+    """Rank Correlation Index (doc #31): Spearman's rank correlation between
+    time and price over each window, scaled to -100..+100.
+
+    RCI = (1 - 6 * sum(d^2) / (N * (N^2 - 1))) * 100, d = time rank (newest =
+    1) minus price rank (highest = 1). Perfect new-high windows score +100,
+    perfect new-low windows -100. Ties in price share averaged ranks.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    denom = period * (period * period - 1)
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(period - 1, len(closes)):
+        window = closes[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        wf = [float(v) for v in window]  # type: ignore[arg-type]
+        order = sorted(range(period), key=lambda j: wf[j], reverse=True)
+        price_rank = [0] * period
+        # Average ranks for equal prices: assign each tied member the mean
+        # of the positions it spans.
+        j = 0
+        while j < period:
+            k = j
+            while k + 1 < period and wf[order[k + 1]] == wf[order[j]]:
+                k += 1
+            avg_rank = (j + k) / 2.0 + 1.0
+            for m in range(j, k + 1):
+                price_rank[order[m]] = avg_rank
+            j = k + 1
+        d2 = sum(
+            (float(t + 1) - price_rank[period - 1 - t]) ** 2
+            for t in range(period)
+        )
+        out[i] = (1.0 - 6.0 * d2 / denom) * 100.0
+    return out
+
+
+def price_oscillator(
+    closes: Sequence[Optional[float]], fast_period: int = 10, slow_period: int = 30
+) -> dict[str, list[Optional[float]]]:
+    """Price Oscillator (doc #32): fast MA minus slow MA, both forms.
+
+    'abs' is MA(fast) - MA(slow) in price units; 'pct' is that difference
+    divided by the slow MA, x100. Keys: 'abs', 'pct'.
+    """
+    if fast_period <= 0 or slow_period <= 0 or fast_period >= slow_period:
+        raise ValueError("require 0 < fast < slow")
+    fast = sma_on_valid(closes, fast_period)
+    slow = sma_on_valid(closes, slow_period)
+    abs_out: list[Optional[float]] = [None] * len(closes)
+    pct_out: list[Optional[float]] = [None] * len(closes)
+    for i, (f, s) in enumerate(zip(fast, slow)):
+        if f is None or s is None:
+            continue
+        sf = float(s)  # type: ignore[arg-type]
+        diff = float(f) - sf  # type: ignore[arg-type]
+        abs_out[i] = diff
+        if sf != 0:
+            pct_out[i] = diff / sf * 100.0
+    return {"abs": abs_out, "pct": pct_out}
+
+
+def relative_volatility_index(
+    closes: Sequence[Optional[float]], period: int = 14
+) -> list[Optional[float]]:
+    """Relative Volatility Index (doc #33, Chande): the RSI idea applied to
+    standard deviation.
+
+    Per bar, sd = StdDev(close, N); 'upward volatility' collects sd on days
+    the close rose, 'downward' on days it fell, and
+    RVI = 100 * EMA(up, N) / (EMA(up, N) + EMA(down, N)).
+    A window with no dispersion makes the denominator 0 - None, not 0.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    n = len(closes)
+    sd = stdev_series(closes, period)
+    up: list[Optional[float]] = [None] * n
+    down: list[Optional[float]] = [None] * n
+    for i in range(1, n):
+        if sd[i] is None or closes[i] is None or closes[i - 1] is None:
+            continue
+        rose = float(closes[i]) > float(closes[i - 1])  # type: ignore[arg-type]
+        fell = float(closes[i]) < float(closes[i - 1])  # type: ignore[arg-type]
+        up[i] = float(sd[i]) if rose else 0.0  # type: ignore[arg-type]
+        down[i] = float(sd[i]) if fell else 0.0  # type: ignore[arg-type]
+    ema_up = ema_on_valid(up, period)
+    ema_down = ema_on_valid(down, period)
+    out: list[Optional[float]] = [None] * n
+    for i in range(n):
+        u, d = ema_up[i], ema_down[i]
+        if u is None or d is None or (u + d) == 0:
+            continue
+        out[i] = 100.0 * u / (u + d)
+    return out

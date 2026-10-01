@@ -792,7 +792,14 @@ export type IndicatorKey =
   | "connors_rsi"
   | "coppock"
   | "fisher_9"
-  | "kst";
+  | "kst"
+  | "dpo_21"
+  | "smi_ergodic"
+  | "smi_ergodic_signal"
+  | "rci_14"
+  | "price_osc_abs"
+  | "price_osc_pct"
+  | "rvi_volatility_14";
 
 export interface ChartRangeOption {
   value: string;

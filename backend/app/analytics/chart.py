@@ -66,6 +66,11 @@ from app.analytics.indicators import (
     alligator,
     fisher,
     kst,
+    dpo,
+    price_oscillator,
+    rci,
+    relative_volatility_index,
+    smi_ergodic,
     fractals,
     majority_rule,
     lsma,
@@ -559,6 +564,20 @@ async def chart(
         out_indicators["fisher_9"] = fisher(w_closes, 9)
     if "kst" in wanted:
         out_indicators["kst"] = kst(w_closes)
+    if "dpo" in wanted:
+        out_indicators["dpo_21"] = dpo(w_closes, 21)
+    if "smi_ergodic" in wanted:
+        se = smi_ergodic(w_closes)
+        out_indicators["smi_ergodic"] = se["value"]
+        out_indicators["smi_ergodic_signal"] = se["signal"]
+    if "rci" in wanted:
+        out_indicators["rci_14"] = rci(w_closes, 14)
+    if "price_osc" in wanted:
+        po = price_oscillator(w_closes, 10, 30)
+        out_indicators["price_osc_abs"] = po["abs"]
+        out_indicators["price_osc_pct"] = po["pct"]
+    if "rvi_volatility" in wanted:
+        out_indicators["rvi_volatility_14"] = relative_volatility_index(w_closes, 14)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

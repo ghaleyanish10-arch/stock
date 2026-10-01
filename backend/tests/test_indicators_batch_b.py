@@ -50,6 +50,11 @@ from app.analytics.indicators import (
     zigzag,
     tsi,
     wma,
+    dpo,
+    price_oscillator,
+    rci,
+    relative_volatility_index,
+    smi_ergodic,
     roc as roc_fn,
 )
 
@@ -596,3 +601,82 @@ class TestKst:
     def test_warmup(self):
         out = kst([1.0, 2.0, 3.0], (10, 15, 20, 30), (10, 10, 10, 15), (1, 2, 3, 4))
         assert all(v is None for v in out)
+
+
+# ---------------------------------------------------------------------------
+# Doc #29 DPO; #30 SMI Ergodic; #31 RCI; #32 Price Osc; #33 Rel Volatility Idx
+# ---------------------------------------------------------------------------
+
+
+class TestDpo:
+    def test_hand_values(self):
+        closes = [float(x) for x in range(1, 11)]
+        out = dpo(closes, 4)  # shift = 4//2 + 1 = 3
+        assert out[:3] == [None, None, None]
+        # idx5: close[2] - SMA4(3,4,5,6) = 3 - 4.5 = -1.5
+        assert out[5] == pytest.approx(-1.5)
+        assert out[6] == pytest.approx(-1.5)
+
+    def test_flat_is_genuine_zero(self):
+        out = dpo([7.0] * 8, 4)
+        assert out[5] == 0.0
+
+
+class TestSmiiErgodic:
+    def test_value_is_tsi_at_5_5(self):
+        closes = [100.0 + (i % 4) * 2.0 - i * 0.1 for i in range(25)]
+        out = smi_ergodic(closes, 5, 5)
+        assert out["value"] == tsi(closes, 5, 5)
+
+    def test_signal_smooths_value(self):
+        closes = [float(x) for x in range(1, 20)]
+        out = smi_ergodic(closes, 5, 5)
+        # First signal value equals the EMA(5) seed over the first 5 valid values.
+        vals = [v for v in out["value"] if v is not None][:5]
+        first_signal = next(v for v in out["signal"] if v is not None)
+        assert first_signal == pytest.approx(sum(vals) / 5.0)
+
+
+class TestRci:
+    def test_hand_scrambled_window(self):
+        # window [3,2,4,1,5]: sum d^2 = 14 -> RCI = (1 - 84/120) * 100 = 30.
+        assert rci([3.0, 2.0, 4.0, 1.0, 5.0], 5)[4] == pytest.approx(30.0)
+
+    def test_perfect_ranks(self):
+        assert rci([1.0, 2.0, 3.0, 4.0, 5.0], 5)[4] == pytest.approx(100.0)
+        assert rci([5.0, 4.0, 3.0, 2.0, 1.0], 5)[4] == pytest.approx(-100.0)
+
+    def test_warmup(self):
+        assert all(v is None for v in rci([1.0, 2.0, 3.0], 5))
+
+
+class TestPriceOscillator:
+    def test_hand_values(self):
+        closes = [float(x) for x in range(1, 31)]
+        out = price_oscillator(closes, 10, 30)
+        # SMA10(21..30) = 25.5; SMA30(1..30) = 15.5.
+        assert out["abs"][29] == pytest.approx(10.0)
+        assert out["pct"][29] == pytest.approx(10.0 / 15.5 * 100.0)
+
+    def test_requires_fast_lt_slow(self):
+        with pytest.raises(ValueError):
+            price_oscillator([1.0], 30, 10)
+
+
+class TestRelativeVolatilityIndex:
+    def test_hand_value(self):
+        closes = [1.0, 2.0, 4.0, 3.0, 5.0]
+        out = relative_volatility_index(closes, 3)
+        # sd windows: [1,2,4] -> 1.2472 (rose), [2,4,3] -> 0.8165 (fell),
+        # [4,3,5] -> 0.8165 (rose). EMA(3) seeds at idx4:
+        # up = 0.68790, down = 0.27217 -> RVI = 71.65.
+        assert out[4] == pytest.approx(71.65, abs=1e-2)
+        assert out[:4] == [None] * 4
+
+    def test_pure_trends_at_bounds(self):
+        # Rising closes: all volatility is 'up' -> 100; falling -> 0.
+        assert relative_volatility_index([float(x) for x in range(1, 10)], 3)[8] == pytest.approx(100.0)
+        assert relative_volatility_index([float(x) for x in range(9, 0, -1)], 3)[8] == pytest.approx(0.0)
+
+    def test_flat_is_none(self):
+        assert all(v is None for v in relative_volatility_index([4.0] * 8, 3))
