@@ -11,10 +11,12 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from app.analytics.indicators import (
     Bar,
     accumulation_distribution_line,
+    advance_decline,
     atr,
     awesome_oscillator,
     bollinger_on_valid,
@@ -60,6 +62,7 @@ from app.analytics.indicators import (
 from app.archive.service import ArchiveService
 from app.auth.deps import DbSession
 from app.core.provenance import Measured
+from app.db.models import DailyBar
 from app.db.session import SessionLocal
 from app.nepse.registry import get_adapter
 from app.nepse.service import validate_symbol
@@ -353,4 +356,43 @@ async def compare(payload: CompareRequest, session: DbSession) -> dict[str, Any]
         "base": 100 if payload.normalize else None,
         "series": {sym: values for sym, values in series.items()},
         "missing": [s for s in symbols if s not in series],
+    }
+
+
+@router.get("/breadth", summary="Market breadth: advances vs declines and the A/D line")
+async def breadth(session: DbSession) -> dict[str, Any]:
+    """Advance/Decline across every symbol with archived bars.
+
+    Per session: how many symbols' closes rose, fell or held vs the prior
+    session, and the cumulative A/D line. Symbols without a close on either
+    session are skipped for that count - the `note` field says so.
+    """
+    rows = session.execute(
+        select(DailyBar.business_date, DailyBar.symbol, DailyBar.close).order_by(
+            DailyBar.business_date
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(
+            404, "No archived bars yet. Run POST /api/archive/backfill to populate."
+        )
+    dates = sorted({r.business_date for r in rows})
+    date_idx = {d: i for i, d in enumerate(dates)}
+    closes_by_symbol: dict[str, list[Optional[float]]] = {}
+    for business_date, symbol, close in rows:
+        series = closes_by_symbol.setdefault(symbol, [None] * len(dates))
+        series[date_idx[business_date]] = close
+    ad = advance_decline(closes_by_symbol)
+    return {
+        "dates": dates,
+        "advancers": ad["advancers"],
+        "decliners": ad["decliners"],
+        "unchanged": ad["unchanged"],
+        "ad_line": ad["ad_line"],
+        "symbols": len(closes_by_symbol),
+        "note": (
+            "Advances/declines count symbols with a close on both this session "
+            "and the prior one; the A/D line cumulates (advancers - decliners) "
+            "from 0."
+        ),
     }

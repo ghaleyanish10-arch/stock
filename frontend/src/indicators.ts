@@ -117,7 +117,10 @@ export type IndicatorToken =
   | "vol_c2c"
   | "vol_zero_trend"
   | "vol_ohlc"
-  | "vol_index";
+  | "vol_index"
+  | "hl_52w"
+  | "bop"
+  | "correlation";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -571,6 +574,18 @@ export const INDICATORS: IndicatorDef[] = [
   { key: "vol_zero_trend", token: "vol_zero_trend", label: "Volatility Zero Trend 20", color: "#827717", pane: "osc", series: ["vol_zero_trend_20"], desc: "Close-to-close volatility after removing the linear trend from log prices - a steady grind reports low, only back-and-forth counts." },
   { key: "vol_ohlc", token: "vol_ohlc", label: "Volatility OHLC 20", color: "#5d4037", pane: "osc", series: ["vol_ohlc_20"], desc: "Garman-Klass estimator from open/high/low/close: uses the day's range as well as its open-close move, so it reads volatility more efficiently than close-to-close." },
   { key: "vol_index", token: "vol_index", label: "Volatility Index (N/A)", color: "#9e9e9e", pane: "trend", series: [], desc: "Not applicable: a volatility index needs option-implied data, and NEPSE publishes no derivatives or options series - the backend reports this token as disabled rather than faking a value." },
+  {
+    key: "hl_52w",
+    token: "hl_52w",
+    label: "52W High/Low",
+    color: "#26c6da",
+    pane: "overlay",
+    series: ["hl_52w_high", "hl_52w_low"],
+    colors: { hl_52w_high: "#ef5350", hl_52w_low: "#26a69a" },
+    desc: "Flat levels at the highest high and lowest low of the trailing 252 sessions - the classic 52-week range price is measured against.",
+  },
+  { key: "bop", token: "bop", label: "Balance of Power 14", color: "#5e35b1", pane: "osc", series: ["bop_14"], desc: "(Close - Open) / (High - Low), smoothed over 14 bars: who won each session's fight, buyers or sellers. Above 0 buyers dominate." },
+  { key: "correlation", token: "correlation", label: "Correlation 20", color: "#00897b", pane: "osc", series: ["correlation_20"], desc: "Rolling Pearson correlation with a second symbol (pass compare=SYM): +1 they move together, -1 they move opposite, 0 unrelated." },
 ];
 
 /** Default picker mix when nothing is stored. */

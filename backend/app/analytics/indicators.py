@@ -3659,3 +3659,123 @@ def volatility_ohlc(
         # Garman-Klass terms are variance-style: sqrt(mean * ann) directly.
         out[i] = math.sqrt(sum(window) / period * annualization) * 100.0  # type: ignore[type-var,arg-type]
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #45-#48: 52 Week High/Low, Advance/Decline, Balance of Power,
+# Correlation Coefficient
+# ---------------------------------------------------------------------------
+
+
+def high_low_52w(bars: Sequence[Bar], lookback: int = 252) -> dict[str, Optional[float]]:
+    """52 Week High/Low (doc #45): the highest high and lowest low over the
+    trailing `lookback` sessions (252 = one trading year).
+
+    Levels, not a rolling series - the chart draws them as flat lines. None
+    when the window holds no usable high/low at all.
+    """
+    if lookback <= 0:
+        raise ValueError("lookback must be positive")
+    tail = list(bars)[-lookback:]
+    highs = [float(b.high) for b in tail if b.high is not None]
+    lows = [float(b.low) for b in tail if b.low is not None]
+    return {
+        "high": max(highs) if highs else None,
+        "low": min(lows) if lows else None,
+    }
+
+
+def advance_decline(
+    closes_by_symbol: dict[str, list[Optional[float]]]
+) -> dict[str, list[Optional[float]]]:
+    """Advance/Decline (doc #46): market breadth across symbols.
+
+    `closes_by_symbol` maps symbol -> close series aligned to the same
+    session index (the caller owns the alignment). Per session: advancers =
+    symbols whose close rose vs the prior session, decliners = fell,
+    unchanged = equal; a symbol without a close on either session is skipped
+    and the counts say how many were comparable. The A/D line cumulates
+    (advancers - decliners) from 0.0, the same base convention as OBV. A
+    session with no comparable symbol reports None throughout.
+    """
+    n = max((len(v) for v in closes_by_symbol.values()), default=0)
+    advancers: list[Optional[float]] = [None] * n
+    decliners: list[Optional[float]] = [None] * n
+    unchanged: list[Optional[float]] = [None] * n
+    ad_line: list[Optional[float]] = [None] * n
+    acc = 0.0
+    for i in range(n):
+        a = d = u = 0
+        for series in closes_by_symbol.values():
+            if i >= len(series):
+                continue
+            cur = series[i]
+            prev = series[i - 1] if i > 0 else None
+            if cur is None or prev is None:
+                continue
+            if cur > prev:
+                a += 1
+            elif cur < prev:
+                d += 1
+            else:
+                u += 1
+        if a + d + u == 0:
+            continue
+        advancers[i] = float(a)
+        decliners[i] = float(d)
+        unchanged[i] = float(u)
+        acc += float(a - d)
+        ad_line[i] = acc
+    return {"advancers": advancers, "decliners": decliners, "unchanged": unchanged, "ad_line": ad_line}
+
+
+def balance_of_power(bars: Sequence[Bar], period: int = 14) -> list[Optional[float]]:
+    """Balance of Power (doc #47): (Close - Open) / (High - Low), smoothed by
+    an SMA over `period` bars.
+
+    A locked bar (H == L) has no defined power and is None; the smoothing
+    needs `period` computable bars. Zero is a genuine reading (close at the
+    open), not a gap.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    raw: list[Optional[float]] = [None] * len(bars)
+    for i, b in enumerate(bars):
+        if b.open is None or b.close is None or not b.has_range:
+            continue
+        raw[i] = (float(b.close) - float(b.open)) / (float(b.high) - float(b.low))  # type: ignore[arg-type]
+    return sma(raw, period)
+
+
+def correlation(
+    closes_a: Sequence[Optional[float]],
+    closes_b: Sequence[Optional[float]],
+    period: int = 20,
+) -> list[Optional[float]]:
+    """Correlation Coefficient (doc #48): rolling Pearson r between two
+    aligned close series.
+
+    r = sum((x - x̄)(y - ȳ)) / sqrt(sum((x - x̄)^2) * sum((y - ȳ)^2)) over each
+    window. A window where either series is flat has zero variance - r is
+    undefined there, None not 0. The caller must align the series by date.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    n = min(len(closes_a), len(closes_b))
+    out: list[Optional[float]] = [None] * n
+    for i in range(period - 1, n):
+        wa = closes_a[i - period + 1 : i + 1]
+        wb = closes_b[i - period + 1 : i + 1]
+        if any(v is None for v in wa) or any(v is None for v in wb):
+            continue
+        xa = [float(v) for v in wa]  # type: ignore[arg-type]
+        xb = [float(v) for v in wb]  # type: ignore[arg-type]
+        ma = sum(xa) / period
+        mb = sum(xb) / period
+        sxx = sum((x - ma) ** 2 for x in xa)
+        syy = sum((y - mb) ** 2 for y in xb)
+        if sxx == 0 or syy == 0:
+            continue
+        sxy = sum((x - ma) * (y - mb) for x, y in zip(xa, xb))
+        out[i] = sxy / math.sqrt(sxx * syy)
+    return out

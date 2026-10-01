@@ -47,6 +47,8 @@ from app.analytics.indicators import (
     chaikin_volatility,
     cci,
     cumulative_volume_delta,
+    balance_of_power,
+    correlation,
     dema,
     demark_pivots,
     gmma,
@@ -96,6 +98,7 @@ from app.analytics.indicators import (
     money_flow_index,
     smma,
     momentum,
+    high_low_52w,
     obv,
     pivot_points,
     psar,
@@ -222,6 +225,10 @@ async def chart(
         "sma_20,ema_20,rsi_14,macd,bb,vwap,obv,ad,cmf",
         description="Comma-separated indicator keys, or 'none'",
     ),
+    compare: Optional[str] = Query(
+        None,
+        description="Second symbol for correlation / ratio / spread / compare tokens",
+    ),
 ) -> dict[str, Any]:
     """Everything the chart renders, in one response.
 
@@ -247,6 +254,18 @@ async def chart(
 
     security = session.get(Security, sym)
     dates = [r.business_date for r in rows]
+
+    # Cross-symbol tokens need a second series aligned by date.
+    compare_closes_by_date: dict[str, Optional[float]] = {}
+    if compare:
+        compare_sym = validate_symbol(compare)
+        c_rows = session.scalars(
+            select(DailyBar)
+            .where(DailyBar.symbol == compare_sym)
+            .order_by(DailyBar.business_date)
+        ).all()
+        compare_closes_by_date = {r.business_date: r.close for r in c_rows}
+
     opens = [r.open for r in rows]
     highs = [r.high for r in rows]
     lows = [r.low for r in rows]
@@ -628,6 +647,31 @@ async def chart(
             "NEPSE publishes no derivatives or options series, so it cannot "
             "be computed from daily OHLCV."
         )
+    if "hl_52w" in wanted:
+        hilo = high_low_52w(bars, 252)
+        out_indicators["hl_52w_high"] = [hilo["high"]] * len(dates_w)
+        out_indicators["hl_52w_low"] = [hilo["low"]] * len(dates_w)
+    if "bop" in wanted:
+        out_indicators["bop_14"] = balance_of_power(bars, 14)
+    if "correlation" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["correlation"] = (
+                "needs a comparison symbol: pass compare=<SYMBOL> so the two "
+                "close series can be aligned by date."
+            )
+        else:
+            corr_pairs_idx = [
+                i
+                for i, d in enumerate(dates_w)
+                if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
+            ]
+            corr_a = [w_closes[i] for i in corr_pairs_idx]  # type: ignore[misc]
+            corr_b = [compare_closes_by_date[dates_w[i]] for i in corr_pairs_idx]
+            corr_vals = correlation(corr_a, corr_b, 20)
+            corr_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for pos, i in enumerate(corr_pairs_idx):
+                corr_aligned[i] = corr_vals[pos]
+            out_indicators["correlation_20"] = corr_aligned
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

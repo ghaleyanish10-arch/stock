@@ -814,7 +814,11 @@ export type IndicatorKey =
   | "seb_lower"
   | "vol_c2c_20"
   | "vol_zero_trend_20"
-  | "vol_ohlc_20";
+  | "vol_ohlc_20"
+  | "hl_52w_high"
+  | "hl_52w_low"
+  | "bop_14"
+  | "correlation_20";
 
 export interface ChartRangeOption {
   value: string;

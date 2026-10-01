@@ -66,6 +66,10 @@ from app.analytics.indicators import (
     volatility_c2c,
     volatility_ohlc,
     volatility_zero_trend_c2c,
+    advance_decline,
+    balance_of_power,
+    correlation,
+    high_low_52w,
 )
 
 
@@ -878,3 +882,147 @@ class TestVolatilityOhlc:
         assert out[18] is None
         assert out[19] == pytest.approx(225.25, abs=1e-1)
         assert out[20] is None
+
+
+# ---------------------------------------------------------------------------
+# Doc #45 52W High/Low; #46 A/D; #47 BOP; #48 Correlation
+# ---------------------------------------------------------------------------
+
+
+class TestHighLow52w:
+    def test_levels_over_window(self):
+        bars = [bar(1.0 + i, 2.0 + i, i, 1.5 + i) for i in range(300)]
+        out = high_low_52w(bars, 252)
+        # Trailing 252 bars are i in 48..299: high max = 301, low min = 48.
+        assert out["high"] == pytest.approx(301.0)
+        assert out["low"] == pytest.approx(48.0)
+
+    def test_short_window(self):
+        bars = [bar(10.0, 11.0, 9.0, 10.0)]
+        assert high_low_52w(bars, 252) == {"high": 11.0, "low": 9.0}
+
+    def test_no_data(self):
+        assert high_low_52w([bar(None, None, None, None)], 252) == {"high": None, "low": None}
+
+
+class TestAdvanceDecline:
+    def test_hand_counts(self):
+        series = {
+            "s1": [10.0, 11.0, 11.0, 12.0],
+            "s2": [20.0, 19.0, 19.0, 21.0],
+            "s3": [30.0, 30.0, 29.0, 28.0],
+        }
+        out = advance_decline(series)
+        assert out["advancers"] == [None, 1.0, 0.0, 2.0]
+        assert out["decliners"] == [None, 1.0, 1.0, 1.0]
+        assert out["unchanged"] == [None, 1.0, 2.0, 0.0]
+        assert out["ad_line"] == [None, 0.0, -1.0, 0.0]
+
+    def test_missing_closes_skipped(self):
+        series = {
+            "s1": [10.0, None, 12.0],
+            "s2": [20.0, 21.0, None],
+        }
+        out = advance_decline(series)
+        # idx1: s1 has no close, s2 rose -> 1 advance, line +1.
+        assert out["advancers"][1] == 1.0
+        assert out["decliners"][1] == 0.0
+        assert out["ad_line"][1] == 1.0
+        # idx2: no symbol comparable (s1 prev None, s2 cur None) -> None.
+        assert out["ad_line"][2] is None
+
+
+class TestBalanceOfPower:
+    def test_hand_values(self):
+        # (C-O)/(H-L): up bar 0.5, doji-at-open 0.0, down bar -0.5.
+        bars = [
+            bar(10.0, 11.5, 9.5, 11.0),
+            bar(10.0, 11.0, 9.0, 10.0),
+            bar(10.0, 10.5, 8.5, 9.0),
+        ]
+        assert balance_of_power(bars, 1) == [0.5, 0.0, -0.5]
+
+    def test_smoothed(self):
+        bars = [bar(10.0, 11.5, 9.5, 11.0) for _ in range(3)]
+        assert balance_of_power(bars, 2)[2] == pytest.approx(0.5)
+
+    def test_locked_bar_is_none(self):
+        bars = [flat_bar(10.0), flat_bar(10.0)]
+        assert all(v is None for v in balance_of_power(bars, 1))
+
+
+class TestCorrelation:
+    def test_perfect_positive_and_negative(self):
+        x = [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert correlation(x, [2.0, 4.0, 6.0, 8.0, 10.0], 5)[4] == pytest.approx(1.0)
+        assert correlation(x, [5.0, 4.0, 3.0, 2.0, 1.0], 5)[4] == pytest.approx(-1.0)
+
+    def test_hand_partial(self):
+        # Sxy = 8, Sxx = 10, Syy = 6.8 -> r = 8 / sqrt(68) = 0.97014.
+        r = correlation([1.0, 2.0, 3.0, 4.0, 5.0], [1.0, 2.0, 3.0, 4.0, 4.0], 5)[4]
+        assert r == pytest.approx(0.97014, abs=1e-4)
+
+    def test_flat_series_is_none(self):
+        out = correlation([1.0, 2.0, 3.0], [2.0, 2.0, 2.0], 3)
+        assert out[2] is None
+
+    def test_warmup(self):
+        out = correlation([1.0, 2.0], [3.0, 4.0], 5)
+        assert out == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# Breadth route (/api/analytics/breadth): route wiring over seeded bars
+# ---------------------------------------------------------------------------
+
+
+class TestBreadthRoute:
+    def test_route_counts_and_line(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from app.analytics.routes import router as analytics_router
+        from app.auth.deps import get_session
+        from app.db.models import Base, DailyBar
+
+        # TestClient serves requests from another thread: share one in-memory
+        # DB across threads explicitly.
+        engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine, expire_on_commit=False)
+        session = Session()
+        rows = [
+            DailyBar(symbol="AAA", business_date="2026-01-0%d" % d, close=c)
+            for d, c in ((1, 10.0), (2, 11.0), (3, 11.0), (4, 12.0))
+        ] + [
+            DailyBar(symbol="BBB", business_date="2026-01-0%d" % d, close=c)
+            for d, c in ((1, 20.0), (2, 19.0), (3, 19.0), (4, 21.0))
+        ]
+        session.add_all(rows)
+        session.commit()
+
+        app = FastAPI()
+        app.include_router(analytics_router)
+        app.dependency_overrides[get_session] = lambda: session
+        try:
+            client = TestClient(app)
+            resp = client.get("/api/analytics/breadth")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["symbols"] == 2
+            # AAA rose, BBB fell on 01-02; both flat on 01-03; both up on 01-04.
+            assert body["advancers"] == [None, 1.0, 0.0, 2.0]
+            assert body["decliners"] == [None, 1.0, 0.0, 0.0]
+            assert body["ad_line"] == [None, 0.0, 0.0, 2.0]
+            assert "prior" in body["note"]
+        finally:
+            session.close()
+            Base.metadata.drop_all(bind=engine)
+            engine.dispose()
