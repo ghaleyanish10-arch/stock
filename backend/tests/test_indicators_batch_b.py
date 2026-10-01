@@ -37,6 +37,12 @@ from app.analytics.indicators import (
     gmma,
     smma,
     ema_on_valid,
+    alligator,
+    fractals,
+    majority_rule,
+    trend_strength,
+    zigzag,
+    tsi,
 )
 
 
@@ -371,3 +377,123 @@ class TestGmma:
     def test_matches_ema_on_valid(self):
         closes = [1.0, 2.0, 3.0, None, 5.0, 6.0]
         assert gmma(closes, short=(3,))["gmma_s3"] == ema_on_valid(closes, 3)
+
+
+# ---------------------------------------------------------------------------
+# Doc #18 Majority Rule; #19 Trend Strength; #20 Zig Zag; #21 Alligator;
+# #22 Fractal
+# ---------------------------------------------------------------------------
+
+
+def flat_bar(p, date="2026-01-01"):
+    return bar(p, p, p, p, date=date)
+
+
+class TestMajorityRule:
+    def test_strong_uptrend_scores_positive(self):
+        bars = [bar(100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i) for i in range(30)]
+        out = majority_rule(bars)
+        assert out["score"][29] is not None
+        assert out["score"][29] > 0
+        # Short warm-up: only 4 of 7 conditions are computable on 30 bars
+        # (SMA50/100 still warming) - disclosed in 'components'.
+        assert out["components"][0] is None
+        assert out["components"][29] == 4.0
+
+    def test_downtrend_scores_negative(self):
+        bars = [bar(130.0 - i, 131.0 - i, 129.0 - i, 130.0 - i) for i in range(30)]
+        out = majority_rule(bars)
+        assert out["score"][29] < 0
+
+    def test_partial_votes_are_disclosed(self):
+        bars = [bar(10, 11, 9, 10), bar(None, 11, 9, 11)]
+        out = majority_rule(bars)
+        # Only the prior-close condition is computable at idx1: a single +1
+        # vote on one component - the count says so.
+        assert out["score"][1] == 1.0
+        assert out["components"][1] == 1.0
+        # idx0 has no prior close and no warm averages: no votes at all.
+        assert out["score"][0] is None
+        assert out["components"][0] is None
+
+
+class TestTrendStrength:
+    def test_is_tsi_math(self):
+        closes = [
+            100.0, 101.5, 100.8, 102.3, 103.1, 102.0, 103.8, 104.9, 104.1,
+            105.5, 106.2, 105.0, 106.8, 107.4, 106.1, 107.9, 108.5, 107.2,
+        ]
+        assert trend_strength(closes, 5, 3) == tsi(closes, 5, 3)
+
+
+class TestZigzag:
+    def test_hand_swings_dev10(self):
+        bars = [flat_bar(p) for p in (100.0, 104.0, 92.0, 98.0, 108.0)]
+        out = zigzag(bars, 10.0)
+        # 92 <= 104 * 0.9 confirms the high at idx1; 108 >= 92 * 1.1 confirms
+        # the low at idx2; the running high at idx4 is still provisional.
+        assert out["price"] == [None, 104.0, 92.0, None, None]
+        assert out["confirmed"] == [False, True, True, False, False]
+
+    def test_below_threshold_no_pivots(self):
+        bars = [flat_bar(p) for p in (100.0, 105.0, 102.0)]
+        out = zigzag(bars, 10.0)
+        assert all(v is None for v in out["price"])
+        assert not any(out["confirmed"])
+
+    def test_gap_closes_skipped(self):
+        bars = [flat_bar(100.0), flat_bar(104.0), flat_bar(None), flat_bar(92.0)]
+        out = zigzag(bars, 10.0)
+        assert out["price"][1] == 104.0
+
+
+class TestAlligator:
+    def test_constant_market(self):
+        bars = [flat_bar(7.0) for _ in range(25)]
+        out = alligator(bars)
+        # HL2 = 7 throughout; SMMA(p) seeds at idx p-1 and appears `shift`
+        # bars later: lips (5,3) first at idx7, teeth (8,5) at idx12,
+        # jaw (13,8) at idx20.
+        assert out["lips"][6] is None and out["lips"][7] == pytest.approx(7.0)
+        assert out["teeth"][11] is None and out["teeth"][12] == pytest.approx(7.0)
+        assert out["jaw"][19] is None and out["jaw"][20] == pytest.approx(7.0)
+
+    def test_hand_recursion_on_ramp(self):
+        bars = [flat_bar(float(x)) for x in range(1, 31)]
+        out = alligator(bars)
+        # lips: SMMA(5) on 1..30: seed idx4 = 3.0; idx5 = (3*4 + 6)/5 = 3.6;
+        # idx6 = (3.6*4 + 7)/5 = 4.28; shifted 3 -> lips[9] = 4.28.
+        assert out["lips"][9] == pytest.approx(4.28)
+
+
+class TestFractals:
+    def test_five_bar_patterns(self):
+        bars = [bar(2, 1.0, 5.0, 2), bar(2, 2.0, 4.0, 2), bar(2, 3.0, 3.0, 2),
+                bar(2, 2.0, 4.0, 2), bar(2, 1.0, 5.0, 2)]
+        out = fractals(bars)
+        assert out["high"][2] == 3.0
+        assert out["low"][2] == 3.0
+        assert out["confirmed"][2] is True
+        assert out["confirmed"][1] is False
+
+    def test_strict_inequality_rejects_ties(self):
+        bars = [bar(2, 2.0, 3.0, 2), bar(2, 2.0, 3.0, 2), bar(2, 2.0, 3.0, 2),
+                bar(2, 2.0, 3.0, 2), bar(2, 2.0, 3.0, 2)]
+        out = fractals(bars)
+        assert all(v is None for v in out["high"])
+        assert all(v is None for v in out["low"])
+
+    def test_unconfirmable_tail_and_head(self):
+        # n=4 with wings=2: no centre bar has two neighbours on both sides.
+        bars = [bar(2, 3.0, 1.0, 2), bar(2, 2.0, 2.0, 2), bar(2, 1.0, 3.0, 2),
+                bar(2, 2.0, 2.0, 2)]
+        out = fractals(bars)
+        assert all(v is None for v in out["high"])
+        assert all(v is None for v in out["low"])
+
+    def test_outside_bar_is_both(self):
+        bars = [bar(2, 2.0, 2.0, 2), bar(2, 3.0, 3.0, 2), bar(2, 5.0, 1.0, 2),
+                bar(2, 3.0, 3.0, 2), bar(2, 2.0, 2.0, 2)]
+        out = fractals(bars)
+        assert out["high"][2] == 5.0
+        assert out["low"][2] == 1.0

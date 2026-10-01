@@ -775,7 +775,18 @@ export type IndicatorKey =
   | "gmma_l40"
   | "gmma_l45"
   | "gmma_l50"
-  | "gmma_l60";
+  | "gmma_l60"
+  | "majority_score"
+  | "majority_components"
+  | "trend_strength"
+  | "zigzag_price"
+  | "zigzag_confirmed"
+  | "alligator_jaw"
+  | "alligator_teeth"
+  | "alligator_lips"
+  | "fractal_high"
+  | "fractal_low"
+  | "fractal_confirmed";
 
 export interface ChartRangeOption {
   value: string;

@@ -2814,3 +2814,199 @@ def gmma(
     for p in long:
         out[f"gmma_l{p}"] = ema_on_valid(closes, p)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #18-#22: Majority Rule, Trend Strength Index, Zig Zag,
+# Williams Alligator, Williams Fractal
+# ---------------------------------------------------------------------------
+
+
+def majority_rule(bars: Sequence[Bar]) -> dict[str, list[Optional[float]]]:
+    """Majority Rule (doc #18): net bullish-minus-bearish vote of a fixed
+    condition basket.
+
+    The doc lets the trader pick the conditions; a picker of arbitrary
+    indicators is not reproducible server-side, so this ships one documented
+    basket of seven: close vs SMA20, SMA50, SMA100 and EMA21, SMA20 vs SMA50,
+    close vs the previous close, and RSI(14) above/below 50. Each component
+    votes +1 (bullish), -1 (bearish) or 0 (exact tie); 'score' is the sum and
+    'components' the number that were computable that bar, so a vote taken on
+    a short warm-up is visible as such instead of silently partial.
+    """
+    closes = [b.close for b in bars]
+    sma20 = sma_on_valid(closes, 20)
+    sma50 = sma_on_valid(closes, 50)
+    sma100 = sma_on_valid(closes, 100)
+    ema21 = ema_on_valid(closes, 21)
+    rsi14 = rsi_on_valid(closes, 14)
+    n = len(bars)
+    score: list[Optional[float]] = [None] * n
+    components: list[Optional[float]] = [None] * n
+    for i in range(n):
+        c = closes[i]
+        if c is None:
+            continue
+        cf = float(c)
+        votes: list[float] = []
+        for ma in (sma20[i], sma50[i], sma100[i], ema21[i]):
+            if ma is not None:
+                votes.append(1.0 if cf > float(ma) else -1.0)
+        if sma20[i] is not None and sma50[i] is not None:
+            votes.append(1.0 if float(sma20[i]) > float(sma50[i]) else -1.0)  # type: ignore[arg-type]
+        if i > 0 and closes[i - 1] is not None:
+            prev = float(closes[i - 1])  # type: ignore[arg-type]
+            votes.append(1.0 if cf > prev else (-1.0 if cf < prev else 0.0))
+        if rsi14[i] is not None:
+            r = float(rsi14[i])  # type: ignore[arg-type]
+            votes.append(1.0 if r > 50.0 else (-1.0 if r < 50.0 else 0.0))
+        if not votes:
+            continue
+        score[i] = float(sum(votes))
+        components[i] = float(len(votes))
+    return {"score": score, "components": components}
+
+
+def trend_strength(
+    closes: Sequence[Optional[float]], long_period: int = 25, short_period: int = 13
+) -> list[Optional[float]]:
+    """Trend Strength Index (doc #19): smoothed directional price change over
+    smoothed absolute price change, x100.
+
+    This is exactly the True Strength Index construction the doc calls
+    'TSI-style'; it is registered under its own name because the doc lists it
+    separately, but the numbers match the existing TSI entry by design.
+    """
+    return tsi(closes, long_period, short_period)
+
+
+def zigzag(
+    bars: Sequence[Bar], deviation_pct: float = 5.0
+) -> dict[str, list[Optional[float]]]:
+    """Zig Zag (doc #20): the price path reduced to swings that reverse by at
+    least `deviation_pct`.
+
+    A swing is recorded only when a later move against the running extreme
+    crosses the threshold, so every emitted pivot is confirmed by definition;
+    the still-developing leg's extreme is withheld until it confirms - which
+    is the 'confirmed' contract for this indicator ('price' marks confirmed
+    pivot bars, 'confirmed' is True exactly there and False elsewhere).
+    Runs on closes; gaps in closes are skipped without resetting the leg.
+    """
+    if deviation_pct <= 0:
+        raise ValueError("deviation_pct must be positive")
+    n = len(bars)
+    price: list[Optional[float]] = [None] * n
+    confirmed = [False] * n
+    up = 1.0 + deviation_pct / 100.0
+    down = 1.0 - deviation_pct / 100.0
+    direction = 0  # 0 undetermined, +1 rising leg, -1 falling leg
+    hi_idx = hi_p = lo_idx = lo_p = None  # type: ignore[assignment]
+    extreme_idx = extreme_p = None  # type: ignore[assignment]
+    for i, b in enumerate(bars):
+        c = b.close
+        if c is None:
+            continue
+        cf = float(c)
+        if direction == 0:
+            # First confirmation is a reversal of dev% from a running
+            # extreme; the check must precede the update so a bar that
+            # extends an extreme is not compared against itself.
+            if hi_p is not None and cf <= hi_p * down:
+                price[hi_idx] = hi_p  # type: ignore[index]
+                confirmed[hi_idx] = True  # type: ignore[index]
+                direction = -1
+                extreme_idx, extreme_p = i, cf
+            elif lo_p is not None and cf >= lo_p * up:
+                price[lo_idx] = lo_p  # type: ignore[index]
+                confirmed[lo_idx] = True  # type: ignore[index]
+                direction = 1
+                extreme_idx, extreme_p = i, cf
+            else:
+                if hi_p is None or cf > hi_p:
+                    hi_idx, hi_p = i, cf
+                if lo_p is None or cf < lo_p:
+                    lo_idx, lo_p = i, cf
+        elif direction == 1:
+            if cf > extreme_p:  # type: ignore[operator]
+                extreme_idx, extreme_p = i, cf
+            elif cf <= extreme_p * down:  # type: ignore[operator]
+                price[extreme_idx] = extreme_p  # type: ignore[index]
+                confirmed[extreme_idx] = True
+                direction = -1
+                extreme_idx, extreme_p = i, cf
+        else:
+            if cf < extreme_p:  # type: ignore[operator]
+                extreme_idx, extreme_p = i, cf
+            elif cf >= extreme_p * up:  # type: ignore[operator]
+                price[extreme_idx] = extreme_p  # type: ignore[index]
+                confirmed[extreme_idx] = True
+                direction = 1
+                extreme_idx, extreme_p = i, cf
+    return {"price": price, "confirmed": confirmed}
+
+
+def alligator(
+    bars: Sequence[Bar],
+    jaw: tuple[int, int] = (13, 8),
+    teeth: tuple[int, int] = (8, 5),
+    lips: tuple[int, int] = (5, 3),
+) -> dict[str, list[Optional[float]]]:
+    """Williams Alligator (doc #21): three SMMA lines on the median price,
+    each displaced forward by its balance-period offset.
+
+    Jaw = SMMA(HL2, 13) shifted 8, Teeth = SMMA(HL2, 8) shifted 5, Lips =
+    SMMA(HL2, 5) shifted 3. The classic plot draws the displaced part in the
+    future; this series keeps input alignment, so each line's first `shift`
+    slots are None and the final `shift` values (the projection) are outside
+    the request window - honest about what a same-length series can show.
+    """
+    src = hl2_series(bars)
+
+    def shifted(period: int, offset: int) -> list[Optional[float]]:
+        smoothed = rma(src, period)
+        out: list[Optional[float]] = [None] * len(smoothed)
+        for i in range(offset, len(smoothed)):
+            out[i] = smoothed[i - offset]
+        return out
+
+    return {
+        "jaw": shifted(jaw[0], jaw[1]),
+        "teeth": shifted(teeth[0], teeth[1]),
+        "lips": shifted(lips[0], lips[1]),
+    }
+
+
+def fractals(bars: Sequence[Bar], wings: int = 2) -> dict[str, list[Optional[float]]]:
+    """Williams Fractal (doc #22): swing highs/lows strictly above/below the
+    `wings` neighbouring bars on each side.
+
+    A five-bar pattern (wings = 2) needs two bars on both sides, so a fractal
+    is only knowable two bars after its centre - this implementation exposes
+    a fractal only once those bars exist, and 'confirmed' is True exactly at
+    emitted fractal bars (False elsewhere). A bar can be both a bullish and a
+    bearish fractal (an outside bar). Strict inequality: equal neighbours
+    disqualify, matching the doc's '>'.
+    """
+    if wings <= 0:
+        raise ValueError("wings must be positive")
+    n = len(bars)
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    high: list[Optional[float]] = [None] * n
+    low: list[Optional[float]] = [None] * n
+    confirmed = [False] * n
+    for t in range(wings, n - wings):
+        hs = highs[t - wings : t + wings + 1]
+        ls = lows[t - wings : t + wings + 1]
+        h = highs[t]
+        if h is not None and all(v is not None for v in hs):
+            if all(h > float(v) for i2, v in enumerate(hs) if i2 != wings):
+                high[t] = float(h)
+                confirmed[t] = True
+        l = lows[t]
+        if l is not None and all(v is not None for v in ls):
+            if all(l < float(v) for i2, v in enumerate(ls) if i2 != wings):
+                low[t] = float(l)
+                confirmed[t] = True
+    return {"high": high, "low": low, "confirmed": confirmed}

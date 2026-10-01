@@ -59,6 +59,9 @@ from app.analytics.indicators import (
     klinger_oscillator,
     macd,
     macd_on_valid,
+    alligator,
+    fractals,
+    majority_rule,
     lsma,
     ma_channel,
     ma_cross,
@@ -89,9 +92,11 @@ from app.analytics.indicators import (
     ultimate_oscillator,
     volume_price_trend,
     volume_profile,
+    trend_strength,
     volume_oscillator,
     vwap_series,
     williams_r,
+    zigzag,
     wma,
     rvi,
     Bar,
@@ -516,6 +521,26 @@ async def chart(
     if "gmma" in wanted:
         for key, series_ in gmma(w_closes).items():
             out_indicators[key] = series_
+    if "majority_rule" in wanted:
+        mr = majority_rule(bars)
+        out_indicators["majority_score"] = mr["score"]
+        out_indicators["majority_components"] = mr["components"]
+    if "trend_strength" in wanted:
+        out_indicators["trend_strength"] = trend_strength(w_closes)
+    if "zigzag" in wanted:
+        zz = zigzag(bars, 5.0)
+        out_indicators["zigzag_price"] = zz["price"]
+        out_indicators["zigzag_confirmed"] = zz["confirmed"]
+    if "alligator" in wanted:
+        ag = alligator(bars)
+        out_indicators["alligator_jaw"] = ag["jaw"]
+        out_indicators["alligator_teeth"] = ag["teeth"]
+        out_indicators["alligator_lips"] = ag["lips"]
+    if "fractals" in wanted:
+        fr = fractals(bars)
+        out_indicators["fractal_high"] = fr["high"]
+        out_indicators["fractal_low"] = fr["low"]
+        out_indicators["fractal_confirmed"] = fr["confirmed"]
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

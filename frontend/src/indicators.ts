@@ -90,7 +90,12 @@ export type IndicatorToken =
   | "linreg_slope"
   | "linreg_trend"
   | "mcginley"
-  | "gmma";
+  | "gmma"
+  | "majority_rule"
+  | "trend_strength"
+  | "zigzag"
+  | "alligator"
+  | "fractals";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -447,6 +452,36 @@ export const INDICATORS: IndicatorDef[] = [
       gmma_l30: "#26a69a", gmma_l35: "#66bb6a", gmma_l40: "#9ccc65", gmma_l45: "#c0ca33", gmma_l50: "#ffa726", gmma_l60: "#ff7043",
     },
     desc: "Guppy Multiple MA - six fast EMAs (traders) over six slow EMAs (investors); compressed ribbons mark agreement, expanding ones mark transitions.",
+  },
+  { key: "majority_rule", token: "majority_rule", label: "Majority Rule", color: "#5c6bc0", pane: "trend", series: ["majority_score"], desc: "Net vote of a fixed 7-condition basket (closes vs SMA20/50/100/EMA21, SMA20 vs 50, prior close, RSI 50-line): +7 fully bullish, -7 fully bearish. Payload includes how many conditions were computable." },
+  { key: "trend_strength", token: "trend_strength", label: "Trend Strength 25/13", color: "#00897b", pane: "osc", series: ["trend_strength"], desc: "Smoothed directional price change over smoothed absolute change (x100) - TSI-style: high positive = strong uptrend, deep negative = strong downtrend." },
+  {
+    key: "zigzag",
+    token: "zigzag",
+    label: "Zig Zag 5%",
+    color: "#ffd54f",
+    pane: "overlay",
+    series: ["zigzag_price"],
+    desc: "Only swings that reverse by at least 5% are drawn, and each pivot appears only once confirmed - the developing leg is withheld until the threshold is crossed.",
+  },
+  {
+    key: "alligator",
+    token: "alligator",
+    label: "Williams Alligator",
+    color: "#4caf50",
+    pane: "overlay",
+    series: ["alligator_jaw", "alligator_teeth", "alligator_lips"],
+    colors: { alligator_jaw: "#1b5e20", alligator_teeth: "#e53935", alligator_lips: "#7cb342" },
+    desc: "Three smoothed median-price averages (13/8/5) displaced 8/5/3 bars - jaw, teeth and lips. Sleeping lines = rest; spreading lines = the alligator wakes (trend).",
+  },
+  {
+    key: "fractals",
+    token: "fractals",
+    label: "Williams Fractal",
+    color: "#ef5350",
+    pane: "overlay",
+    series: ["fractal_high", "fractal_low"],
+    desc: "Swing highs/lows strictly above/below the two bars on each side, shown only once both future bars exist (confirmed flag in the payload: fractal_confirmed).",
   },
 ];
 
