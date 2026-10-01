@@ -19,10 +19,13 @@ from app.db.models import (
     DailyBar,
     FeeTaxRate,
     User,
+    LedgerEvent,
+    LedgerEventType,
 )
 from app.reference.service import ReferenceService
 from app.nepse.registry import get_adapter
 from app.ai.service import AIService, GroundingContext
+from app.portfolio.ledger import LedgerService
 
 
 class PortfolioService:
@@ -30,6 +33,7 @@ class PortfolioService:
 
     def __init__(self, reference_service: ReferenceService):
         self._reference = reference_service
+        self._ledger = LedgerService(reference_service)
 
     # --- Portfolio CRUD ---
 
@@ -111,7 +115,7 @@ class PortfolioService:
         fees: Optional[float] = None,
         note: Optional[str] = None,
     ) -> Transaction:
-        """Add a transaction and update holdings."""
+        """Add a transaction and create corresponding ledger event, then replay."""
         portfolio = session.get(Portfolio, portfolio_id)
         if not portfolio or portfolio.user_id != user_id:
             raise ValueError("Portfolio not found or access denied")
@@ -125,7 +129,7 @@ class PortfolioService:
         if side not in ("buy", "sell"):
             raise ValueError("Side must be 'buy' or 'sell'")
 
-        # Check sufficient quantity for sell
+        # Check sufficient quantity for sell (against current holdings)
         if side == "sell":
             holding = session.scalar(
                 select(Holding).where(
@@ -147,65 +151,17 @@ class PortfolioService:
             note=note,
         )
         session.add(transaction)
+        session.flush()
 
-        # Update holdings
-        self._update_holding_from_transaction(session, portfolio_id, transaction)
+        # Create ledger event for this transaction
+        self._ledger.create_event_from_transaction(session, transaction, user_id)
+
+        # Replay portfolio to rebuild holdings
+        self._ledger.replay_portfolio(session, portfolio_id, user_id, triggered_by=user_id, trigger_reason="transaction_add")
 
         session.commit()
+        session.refresh(transaction)
         return transaction
-
-    def _update_holding_from_transaction(
-        self,
-        session: Session,
-        portfolio_id: str,
-        transaction: Transaction,
-    ) -> None:
-        """Update holdings based on a new transaction."""
-        symbol = transaction.symbol
-        side = transaction.side
-        quantity = transaction.quantity
-        price = transaction.price
-
-        holding = session.scalar(
-            select(Holding).where(
-                Holding.portfolio_id == portfolio_id,
-                Holding.symbol == transaction.symbol,
-            )
-        )
-
-        if side == "buy":
-            if holding is None:
-                holding = Holding(
-                    portfolio_id=portfolio_id,
-                    symbol=transaction.symbol,
-                    quantity=0,
-                    avg_cost=0.0,
-                    total_cost=0.0,
-                )
-                session.add(holding)
-
-            # Update weighted average cost
-            total_cost = holding.total_cost + (quantity * price)
-            total_qty = holding.quantity + quantity
-            holding.avg_cost = total_cost / total_qty if total_qty > 0 else 0
-            holding.total_cost = total_cost
-            holding.quantity = total_qty
-
-            if holding.first_bought_at is None:
-                holding.first_bought_at = datetime.utcnow()
-            holding.last_transacted_at = datetime.utcnow()
-
-        else:  # sell
-            if not holding or holding.quantity < quantity:
-                raise ValueError("Insufficient holdings")
-
-            # Reduce quantity, keep avg_cost
-            holding.quantity -= quantity
-            if holding.quantity == 0:
-                session.delete(holding)
-            else:
-                holding.total_cost = holding.avg_cost * holding.quantity
-            holding.last_transacted_at = datetime.utcnow()
 
     def get_transactions(
         self,
@@ -239,7 +195,7 @@ class PortfolioService:
         transaction_id: str,
         **updates: Any,
     ) -> Optional[Transaction]:
-        """Update a transaction (recalculates holdings)."""
+        """Update a transaction (recalculates holdings via ledger replay)."""
         portfolio = session.get(Portfolio, portfolio_id)
         if not portfolio or portfolio.user_id != user_id:
             return None
@@ -248,20 +204,31 @@ class PortfolioService:
         if not transaction or transaction.portfolio_id != portfolio_id:
             return None
 
-        # Store old values for rollback
-        old_symbol = transaction.symbol
-        old_side = transaction.side
-        old_quantity = transaction.quantity
-        old_price = transaction.price
-
         # Apply updates
         for key, value in updates.items():
             if hasattr(transaction, key):
                 setattr(transaction, key, value)
 
-        # Recalculate holdings: reverse old, apply new
-        self._reverse_holding_change(session, portfolio_id, old_symbol, old_side, old_quantity, old_price)
-        self._update_holding_from_transaction(session, portfolio_id, transaction)
+        # Update corresponding ledger event
+        ledger_event = session.scalar(
+            select(LedgerEvent).where(
+                and_(
+                    LedgerEvent.portfolio_id == portfolio_id,
+                    LedgerEvent.source == f"transaction:{transaction.id}",
+                    LedgerEvent.is_reversed == False,
+                )
+            )
+        )
+        if ledger_event:
+            ledger_event.event_type = transaction.side
+            ledger_event.quantity = transaction.quantity if transaction.side == "buy" else -transaction.quantity
+            ledger_event.price = transaction.price
+            ledger_event.fees = transaction.fees
+            ledger_event.event_date = transaction.trade_date
+            ledger_event.symbol = transaction.symbol
+
+        # Replay portfolio to rebuild holdings
+        self._ledger.replay_portfolio(session, portfolio_id, user_id, triggered_by=user_id, trigger_reason="transaction_update")
 
         session.commit()
         session.refresh(transaction)
@@ -274,7 +241,7 @@ class PortfolioService:
         user_id: str,
         transaction_id: str,
     ) -> bool:
-        """Delete a transaction and reverse its effect on holdings."""
+        """Delete a transaction and its ledger event, then replay."""
         portfolio = session.get(Portfolio, portfolio_id)
         if not portfolio or portfolio.user_id != user_id:
             return False
@@ -283,57 +250,27 @@ class PortfolioService:
         if not transaction or transaction.portfolio_id != portfolio_id:
             return False
 
-        # Reverse the holding change
-        self._reverse_holding_change(
-            session,
-            portfolio_id,
-            transaction.symbol,
-            transaction.side,
-            transaction.quantity,
-            transaction.price,
-        )
-
-        session.delete(transaction)
-        session.commit()
-        return True
-
-    def _reverse_holding_change(
-        self,
-        session: Session,
-        portfolio_id: str,
-        symbol: str,
-        side: str,
-        quantity: int,
-        price: float,
-    ) -> None:
-        """Reverse the effect of a transaction on holdings."""
-        holding = session.scalar(
-            select(Holding).where(
-                Holding.portfolio_id == portfolio_id,
-                Holding.symbol == symbol,
+        # Mark corresponding ledger event as reversed
+        ledger_event = session.scalar(
+            select(LedgerEvent).where(
+                and_(
+                    LedgerEvent.portfolio_id == portfolio_id,
+                    LedgerEvent.source == f"transaction:{transaction.id}",
+                    LedgerEvent.is_reversed == False,
+                )
             )
         )
-        if not holding:
-            return
+        if ledger_event:
+            ledger_event.is_reversed = True
 
-        if side == "buy":
-            # Reverse a buy: reduce quantity and adjust cost
-            if holding.quantity < quantity:
-                # Shouldn't happen, but handle gracefully
-                session.delete(holding)
-                return
+        # Delete the transaction
+        session.delete(transaction)
 
-            holding.total_cost -= quantity * price
-            holding.quantity -= quantity
-            if holding.quantity <= 0:
-                session.delete(holding)
-            else:
-                holding.avg_cost = holding.total_cost / holding.quantity
-        else:
-            # Reverse a sell: add back the sold shares at the original price
-            holding.quantity += quantity
-            holding.total_cost += quantity * price
-            holding.avg_cost = holding.total_cost / holding.quantity
+        # Replay portfolio to rebuild holdings
+        self._ledger.replay_portfolio(session, portfolio_id, user_id, triggered_by=user_id, trigger_reason="transaction_delete")
+
+        session.commit()
+        return True
 
     # --- Holdings ---
 

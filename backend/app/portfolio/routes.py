@@ -282,3 +282,197 @@ async def portfolio_ai_review(
         return {"review": review}
     except Exception as e:
         raise HTTPException(500, f"AI review failed: {str(e)}")
+
+
+# --- Ledger (B1) ---
+
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import date
+
+
+class LedgerEventResponse(BaseModel):
+    id: str
+    symbol: str
+    event_type: str
+    event_date: str
+    quantity: int
+    price: Optional[float]
+    fees: Optional[float]
+    source: str
+    corporate_action_id: Optional[str]
+    subscription_details: Optional[dict]
+    fractional_handling: Optional[str]
+    is_reversed: bool
+    reversed_by: Optional[str]
+    created_at: str
+
+
+@router.get("/{portfolio_id}/ledger", summary="Get portfolio ledger events")
+def get_ledger_events(
+    portfolio_id: str,
+    session: DbSession,
+    user: CurrentUser,
+    symbol: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    from app.db.models import LedgerEvent
+    from sqlalchemy import select, and_, desc
+
+    portfolio = _portfolio.get_portfolio(session, portfolio_id, user.id)
+    if not portfolio:
+        raise HTTPException(404, "Portfolio not found")
+
+    stmt = (
+        select(LedgerEvent)
+        .where(
+            and_(
+                LedgerEvent.portfolio_id == portfolio_id,
+                LedgerEvent.is_reversed == False,
+            )
+        )
+        .order_by(desc(LedgerEvent.event_date), desc(LedgerEvent.created_at))
+    )
+    if symbol:
+        stmt = stmt.where(LedgerEvent.symbol == symbol.upper())
+
+    events = list(session.scalars(stmt.limit(limit).offset(offset)))
+
+    return {
+        "events": [
+            {
+                "id": e.id,
+                "symbol": e.symbol,
+                "event_type": e.event_type,
+                "event_date": e.event_date,
+                "quantity": e.quantity,
+                "price": e.price,
+                "fees": e.fees,
+                "source": e.source,
+                "corporate_action_id": e.corporate_action_id,
+                "subscription_details": e.subscription_details,
+                "fractional_handling": e.fractional_handling,
+                "is_reversed": e.is_reversed,
+                "reversed_by": e.reversed_by,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in events
+        ]
+    }
+
+
+@router.post("/{portfolio_id}/ledger/replay", summary="Trigger portfolio replay")
+def replay_portfolio(
+    portfolio_id: str,
+    session: DbSession,
+    user: CurrentUser,
+) -> dict:
+    result = _portfolio._ledger.replay_portfolio(
+        session, portfolio_id, user.id, triggered_by=user.id, trigger_reason="manual_replay"
+    )
+    return result
+
+
+class PendingCAResponse(BaseModel):
+    corporate_action_id: str
+    symbol: str
+    fiscal_year: Optional[str]
+    cash_dividend_pct: Optional[float]
+    bonus_pct: Optional[float]
+    right_pct: Optional[float]
+    book_close: Optional[str]
+    agm_date: Optional[str]
+    status: str
+
+
+@router.get("/{portfolio_id}/corporate-actions/pending", summary="Get pending corporate actions")
+def get_pending_corporate_actions(
+    portfolio_id: str,
+    session: DbSession,
+    user: CurrentUser,
+) -> dict:
+    pending = _portfolio._ledger.get_pending_corporate_actions(session, portfolio_id, user.id)
+    return {"pending_actions": pending}
+
+
+class ApplyCARequest(BaseModel):
+    corporate_action_id: str
+    event_type: str = Field(..., pattern="^(bonus|rights)$")
+    quantity: int = Field(..., ge=1)
+    price: Optional[float] = Field(default=None, ge=0)
+    fees: Optional[float] = Field(default=None, ge=0)
+    subscription_details: Optional[dict] = None
+    fractional_handling: Optional[str] = None
+
+
+@router.post("/{portfolio_id}/corporate-actions/apply", summary="Apply corporate action to ledger")
+def apply_corporate_action(
+    portfolio_id: str,
+    request: ApplyCARequest,
+    session: DbSession,
+    user: CurrentUser,
+) -> dict:
+    try:
+        event = _portfolio._ledger.apply_corporate_action(
+            session=session,
+            portfolio_id=portfolio_id,
+            user_id=user.id,
+            corporate_action_id=request.corporate_action_id,
+            event_type=request.event_type,
+            quantity=request.quantity,
+            price=request.price,
+            fees=request.fees,
+            subscription_details=request.subscription_details,
+            fractional_handling=request.fractional_handling,
+        )
+        # Replay portfolio to rebuild holdings
+        _portfolio._ledger.replay_portfolio(session, portfolio_id, user.id, triggered_by=user.id, trigger_reason="corporate_action_apply")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "event_id": event.id,
+        "symbol": event.symbol,
+        "event_type": event.event_type,
+        "event_date": event.event_date,
+        "quantity": event.quantity,
+        "price": event.price,
+    }
+
+
+class ReverseEventRequest(BaseModel):
+    event_id: str
+
+
+@router.post("/{portfolio_id}/ledger/reverse", summary="Reverse a ledger event (undo)")
+def reverse_ledger_event(
+    portfolio_id: str,
+    request: ReverseEventRequest,
+    session: DbSession,
+    user: CurrentUser,
+) -> dict:
+    try:
+        event = _portfolio._ledger.reverse_event(
+            session, portfolio_id, user.id, request.event_id
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {
+        "event_id": event.id,
+        "reversed": True,
+        "is_reversed": event.is_reversed,
+        "message": "Event reversed and portfolio replayed",
+    }
+
+
+@router.post("/{portfolio_id}/ledger/sync", summary="Sync transactions to ledger")
+def sync_transactions_to_ledger(
+    portfolio_id: str,
+    session: DbSession,
+    user: CurrentUser,
+) -> dict:
+    created = _portfolio._ledger.sync_transactions_to_ledger(session, portfolio_id, user.id)
+    return {
+        "synced": created,
+        "message": f"Created {created} ledger events from transactions" if created else "Already in sync",
+    }

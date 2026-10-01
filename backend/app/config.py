@@ -143,6 +143,40 @@ AI_DISCLOSURE_TEXT = (
     "- We do not send data for training; it is used only for your single request"
 )
 
+# --- Corporate Actions (B1) ------------------------------------------------
+# Eligibility cutoff: book close minus N settlement days (Nepal T+2 default).
+# UNVERIFIED - verify current settlement cycle with your broker.
+CA_ELIGIBILITY_CUTOFF_DAYS = _get_int("APP_CA_ELIGIBILITY_CUTOFF_DAYS", 2)
+
+# Acquisition date for bonus shares: "book_close" or "agm_date" or "ex_date".
+# UNVERIFIED - verify with your broker/tax advisor.
+CA_BONUS_ACQUISITION_DATE = os.getenv("APP_CA_BONUS_ACQUISITION_DATE", "book_close")
+
+# Fractional bonus shares rounding: "floor" (drop fractions), "round" (standard),
+# or "ceil" (round up). UNVERIFIED - verify with your broker.
+CA_FRACTIONAL_BONUS_ROUNDING = os.getenv("APP_CA_FRACTIONAL_BONUS_ROUNDING", "floor")
+
+# Fee/tax rates with UNVERIFIED marks (must have source or UNVERIFIED label)
+# These are defaults - override via env or database FeeTaxRate table.
+# Broker commission (percent). UNVERIFIED - verify with your broker.
+FEE_BROKER_COMMISSION_PCT = _get_int("APP_FEE_BROKER_COMMISSION_PCT", 35) / 10000  # 0.35%
+# SEBON fee (percent). UNVERIFIED - verify with SEBON.
+FEE_SEBON_PCT = _get_int("APP_FEE_SEBON_PCT", 15) / 10000  # 0.15%
+# NEPSE fee (percent). UNVERIFIED - verify with NEPSE.
+FEE_NEPSE_PCT = _get_int("APP_FEE_NEPSE_PCT", 5) / 10000  # 0.05%
+# DP charge (fixed Rs per transaction). UNVERIFIED - verify with your DP.
+FEE_DP_CHARGE = _get_int("APP_FEE_DP_CHARGE", 25)
+# DP transaction fee (fixed Rs per transaction). UNVERIFIED - verify with your DP.
+FEE_DP_TRANSACTION = _get_int("APP_FEE_DP_TRANSACTION", 5)
+
+# Capital gains tax rates (UNVERIFIED - verify with IRD Nepal)
+# Individual long-term (>1 year holding)
+CGT_INDIVIDUAL_LONG_PCT = _get_int("APP_CGT_INDIVIDUAL_LONG_PCT", 5) / 100  # 5%
+# Individual short-term (<=1 year holding)
+CGT_INDIVIDUAL_SHORT_PCT = _get_int("APP_CGT_INDIVIDUAL_SHORT_PCT", 7) / 100  # 7%
+# Entity (company/trust)
+CGT_ENTITY_PCT = _get_int("APP_CGT_ENTITY_PCT", 10) / 100  # 10%
+
 settings = Settings()
 
 logging.basicConfig(

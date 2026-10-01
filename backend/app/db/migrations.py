@@ -53,6 +53,9 @@ _ADD_STEPS: tuple[tuple[str, str, str, str], ...] = (
     ("add_users_ai_consent", "users", "ai_consent", "BOOLEAN DEFAULT 0"),
     ("add_users_ai_consent_updated_at", "users", "ai_consent_updated_at", "DATETIME"),
     ("add_users_ai_consent_version", "users", "ai_consent_version", "VARCHAR(16)"),
+    # Portfolio Ledger tables (B1)
+    ("add_ledger_events_table", "ledger_events", "id", "VARCHAR(36) PRIMARY KEY"),
+    ("add_ledger_replay_logs_table", "ledger_replay_logs", "id", "VARCHAR(36) PRIMARY KEY"),
 )
 
 

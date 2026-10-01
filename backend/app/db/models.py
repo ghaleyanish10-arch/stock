@@ -399,6 +399,94 @@ class Transaction(Base):
     __table_args__ = (Index("ix_transaction_portfolio_date", "portfolio_id", "trade_date"),)
 
 
+# --- Portfolio Ledger (B1) ---
+# Stores all portfolio events (transactions + corporate actions) as inputs only.
+# Holdings are rebuilt by replaying the ledger in date order.
+# No before/after snapshot columns. Undo = mark event reversed, then replay.
+
+class LedgerEventType(str):
+    """Types of events stored in the portfolio ledger."""
+    BUY = "buy"
+    SELL = "sell"
+    BONUS = "bonus"
+    RIGHTS = "rights"
+    CASH_DIVIDEND = "cash_dividend"
+    STOCK_SPLIT = "stock_split"
+    REVERSE_SPLIT = "reverse_split"
+    MERGER = "merger"
+    SPINOFF = "spinoff"
+
+
+LEDGER_EVENT_TYPES = [
+    "buy", "sell", "bonus", "rights", "cash_dividend",
+    "stock_split", "reverse_split", "merger", "spinoff"
+]
+
+
+class LedgerEvent(Base):
+    """Single event in the portfolio ledger.
+    
+    Inputs only - no before/after snapshots. Holdings are rebuilt by
+    replaying all events for a portfolio in chronological order.
+    """
+    __tablename__ = "ledger_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    # Event date (for ordering)
+    event_date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    # Quantity affected (positive for buy/bonus/rights, negative for sell)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Price per share (for buy/sell/rights). NULL for bonus/split.
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Fees (for buy/sell/rights). NULL for bonus/dividend/split.
+    fees: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Source reference (e.g., "transaction:abc123", "corporate_action:xyz789", "manual")
+    source: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Corporate action ID if this event came from a corporate action
+    corporate_action_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("corporate_actions.id"), nullable=True, index=True
+    )
+    # For rights: subscription details stored as JSON
+    subscription_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # For fractional bonus: how rounding was handled
+    fractional_handling: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # If true, this event is reversed (undone) and should be skipped during replay
+    is_reversed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # ID of the event that reversed this one (for audit trail)
+    reversed_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # User who created this event
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_ledger_portfolio_symbol_date", "portfolio_id", "symbol", "event_date"),
+        Index("ix_ledger_portfolio_date", "portfolio_id", "event_date"),
+    )
+
+
+class LedgerReplayLog(Base):
+    """Audit log of ledger replay operations."""
+    __tablename__ = "ledger_replay_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    triggered_by: Mapped[str] = mapped_column(String(36), nullable=False)  # user_id or "system"
+    trigger_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    events_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="success")
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -725,6 +813,9 @@ __all__ = [
     "WatchlistItem",
     "Portfolio",
     "Transaction",
+    "LedgerEvent",
+    "LedgerReplayLog",
+    "LedgerEventType",
     "Alert",
     "SavedScreen",
     "ChartLayout",
