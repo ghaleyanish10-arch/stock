@@ -30,6 +30,7 @@ from app.analytics.indicators import (
     asi,
     atr,
     average_price,
+    ama,
     awesome_oscillator,
     bollinger,
     bollinger_on_valid,
@@ -57,9 +58,14 @@ from app.analytics.indicators import (
     klinger_oscillator,
     macd,
     macd_on_valid,
+    lsma,
+    ma_channel,
     ma_cross,
     ma_ema_cross,
+    ma_hamming,
+    ma_multiple,
     money_flow_index,
+    smma,
     momentum,
     obv,
     pivot_points,
@@ -476,6 +482,22 @@ async def chart(
         out_indicators["ma_ema_cross_fast"] = mec["fast"]
         out_indicators["ma_ema_cross_slow"] = mec["slow"]
         out_indicators["ma_ema_cross_signal"] = mec["signal"]
+    if "ama" in wanted:
+        out_indicators["ama_9"] = ama(w_closes, 9)
+    if "ma_hamming" in wanted:
+        out_indicators["hamming_20"] = ma_hamming(w_closes, 20)
+    if "ma_multi" in wanted:
+        for key, series_ in ma_multiple(w_closes, (20, 50, 100, 200)).items():
+            out_indicators[key] = series_
+    if "ma_channel" in wanted:
+        chan = ma_channel(w_closes, 20, 10.0)
+        out_indicators["ma_channel_upper"] = chan["upper"]
+        out_indicators["ma_channel_middle"] = chan["middle"]
+        out_indicators["ma_channel_lower"] = chan["lower"]
+    if "smma" in wanted:
+        out_indicators["smma_20"] = smma(w_closes, 20)
+    if "lsma" in wanted:
+        out_indicators["lsma_25"] = lsma(w_closes, 25)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

@@ -79,7 +79,13 @@ export type IndicatorToken =
   | "avg_price"
   | "ema_cross"
   | "ma_cross"
-  | "ma_ema_cross";
+  | "ma_ema_cross"
+  | "ama"
+  | "ma_hamming"
+  | "ma_multi"
+  | "ma_channel"
+  | "smma"
+  | "lsma";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -385,6 +391,30 @@ export const INDICATORS: IndicatorDef[] = [
     colors: { ma_ema_cross_fast: "#ce93d8", ma_ema_cross_slow: "#90caf9" },
     desc: "SMA(9) against EMA(21): mixes a flat-weighted and a recency-weighted average, so crosses confirm when both views of trend agree.",
   },
+  { key: "ama", token: "ama", label: "Adaptive MA 9", color: "#26a69a", pane: "overlay", series: ["ama_9"], desc: "Kaufman's Adaptive MA (9/2/30) - smoothing speed follows the efficiency ratio, hugging trends and going flat in chop." },
+  { key: "ma_hamming", token: "ma_hamming", label: "MA Hamming 20", color: "#ff8a65", pane: "overlay", series: ["hamming_20"], desc: "Weighted average using Hamming-window weights - symmetric smoothing with tapered ends, like an SMA with reduced edge effects." },
+  {
+    key: "ma_multi",
+    token: "ma_multi",
+    label: "MA Multiple 20/50/100/200",
+    color: "#90a4ae",
+    pane: "overlay",
+    series: ["ma_multi_20", "ma_multi_50", "ma_multi_100", "ma_multi_200"],
+    colors: { ma_multi_20: "#e57373", ma_multi_50: "#ffb74d", ma_multi_100: "#81c784", ma_multi_200: "#64b5f6" },
+    desc: "Several SMAs of different lengths at once (20/50/100/200) - stacking them shows short- and long-term trend alignment at a glance.",
+  },
+  {
+    key: "ma_channel",
+    token: "ma_channel",
+    label: "MA Channel 20",
+    color: "#9575cd",
+    pane: "overlay",
+    series: ["ma_channel_upper", "ma_channel_middle", "ma_channel_lower"],
+    colors: { ma_channel_middle: "#7e57c2" },
+    desc: "SMA(20) plus/minus a 10% offset - a fixed-percentage envelope around the moving average for overbought/oversold context.",
+  },
+  { key: "smma", token: "smma", label: "SMMA 20", color: "#4db6ac", pane: "overlay", series: ["smma_20"], desc: "Smoothed MA - Wilder's recursion (prev*(N-1) + price)/N; much smoother and slower than the EMA of the same length." },
+  { key: "lsma", token: "lsma", label: "LSMA 25", color: "#aed581", pane: "overlay", series: ["lsma_25"], desc: "Least Squares MA - endpoint of the best-fit line over 25 bars; tracks the trend with little lag and flips on reversals." },
 ];
 
 /** Default picker mix when nothing is stored. */

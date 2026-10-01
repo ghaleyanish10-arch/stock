@@ -747,7 +747,18 @@ export type IndicatorKey =
   | "ma_cross_signal"
   | "ma_ema_cross_fast"
   | "ma_ema_cross_slow"
-  | "ma_ema_cross_signal";
+  | "ma_ema_cross_signal"
+  | "ama_9"
+  | "hamming_20"
+  | "ma_multi_20"
+  | "ma_multi_50"
+  | "ma_multi_100"
+  | "ma_multi_200"
+  | "ma_channel_upper"
+  | "ma_channel_middle"
+  | "ma_channel_lower"
+  | "smma_20"
+  | "lsma_25";
 
 export interface ChartRangeOption {
   value: string;

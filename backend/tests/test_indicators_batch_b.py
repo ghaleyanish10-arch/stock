@@ -12,6 +12,7 @@ import pytest
 from app.analytics.indicators import (
     Bar,
     alma,
+    ama,
     asi,
     average_price,
     ema_cross,
@@ -21,11 +22,16 @@ from app.analytics.indicators import (
     linreg_endpoint,
     linreg_slope,
     lowest,
+    ma_channel,
     ma_cross,
     ma_ema_cross,
+    ma_hamming,
+    ma_multiple,
     ohlc4_series,
     percentrank,
     rma,
+    lsma,
+    smma,
 )
 
 
@@ -211,3 +217,86 @@ class TestCrosses:
         r = ema_cross([1.0, 2.0], 3, 5)
         assert r["signal"] == [None, None]
         assert r["fast"] == [None, None]
+
+
+# ---------------------------------------------------------------------------
+# Doc #7 AMA (Kaufman adaptive); #8 Hamming MA; #9 MA Multiple;
+# #10 MA Channel; #11 SMMA; #12 LSMA
+# ---------------------------------------------------------------------------
+
+
+class TestAma:
+    RAMP = [float(x) for x in range(1, 16)]  # 1..15: ER = 1 -> sc = (2/3)^2 = 4/9
+
+    def test_trending_series_hand_values(self):
+        out = ama(self.RAMP, 9)
+        # Seeds with the close at idx9 (first bar with 9 prior changes).
+        assert out[8] is None
+        assert out[9] == pytest.approx(10.0)
+        # Perfect trend -> ER = 1 -> fastest sc = (2/3)^2 = 4/9:
+        assert out[10] == pytest.approx(10.0 + 4.0 / 9.0)
+        # idx11: 10.4444 + (4/9) * (12 - 10.4444) = 11.1358.
+        assert out[11] == pytest.approx(11.1358, abs=1e-4)
+
+    def test_flat_series_is_none_not_zero(self):
+        # volatility = 0 -> ER undefined -> None (honesty rule).
+        out = ama([5.0] * 20, 9)
+        assert all(v is None for v in out)
+
+    def test_gap_restarts(self):
+        vals = [float(x) for x in range(1, 12)] + [None] + [13.0]
+        out = ama(vals, 9)
+        assert out[9] == pytest.approx(10.0)
+        assert out[11] is None
+
+
+class TestMaHamming:
+    def test_symmetric_window_hand_value(self):
+        # p=4: w = [0.08, 0.77, 0.77, 0.08] (cos terms -0.5 at 2pi/3, 4pi/3);
+        # (0.08*1 + 0.77*2 + 0.77*3 + 0.08*4) / 1.7 = 2.5.
+        out = ma_hamming([1, 2, 3, 4], 4)
+        assert out[3] == pytest.approx(2.5)
+        assert out[:3] == [None, None, None]
+
+    def test_constant_series_is_exact(self):
+        assert ma_hamming([7.0] * 5, 4)[4] == pytest.approx(7.0)
+
+
+class TestMaMultiple:
+    def test_keys_and_values_match_sma(self):
+        closes = [float(x) for x in range(1, 31)]
+        out = ma_multiple(closes, (20, 50))
+        assert set(out) == {"ma_multi_20", "ma_multi_50"}
+        # SMA(11..30) = 20.5; the 50-period series never warms up.
+        assert out["ma_multi_20"][29] == pytest.approx(20.5)
+        assert all(v is None for v in out["ma_multi_50"])
+
+
+class TestMaChannel:
+    def test_percent_bands(self):
+        closes = [float(x) for x in range(1, 31)]
+        r = ma_channel(closes, 20, 10.0)
+        mid = 20.5  # SMA(11..30)
+        assert r["middle"][29] == pytest.approx(mid)
+        assert r["upper"][29] == pytest.approx(mid * 1.10)
+        assert r["lower"][29] == pytest.approx(mid * 0.90)
+
+    def test_warmup(self):
+        r = ma_channel([1.0, 2.0, 3.0], 20, 10.0)
+        assert all(v is None for v in r["upper"])
+
+
+class TestSmmaLsma:
+    def test_smma_is_rma(self):
+        vals = [1.0, 2.5, 3.0, None, 4.0, 5.5, 6.0, 7.0]
+        assert smma(vals, 5) == rma(vals, 5)
+
+    def test_smma_hand_seed(self):
+        out = smma([1, 2, 3, 4, 5, 6], 4)
+        assert out[3] == pytest.approx(2.5)
+        assert out[4] == pytest.approx((2.5 * 3 + 5) / 4)
+
+    def test_lsma_matches_linreg_endpoint(self):
+        vals = [1.0, 2.0, 3.0, 4.0, 6.0]
+        assert lsma(vals, 5)[4] == pytest.approx(5.6)
+        assert lsma(vals, 5) == linreg_endpoint(vals, 5)

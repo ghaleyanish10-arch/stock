@@ -2606,3 +2606,128 @@ def ma_ema_cross(
     fast = sma_on_valid(closes, fast_period)
     slow = ema_on_valid(closes, slow_period)
     return {"fast": fast, "slow": slow, "signal": _cross_signal(fast, slow)}
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #7-#12: adaptive MA, Hamming MA, MA multiple, MA channel,
+# SMMA, LSMA
+# ---------------------------------------------------------------------------
+
+
+def ama(
+    values: Sequence[Optional[float]],
+    period: int = 9,
+    fast: int = 2,
+    slow: int = 30,
+) -> list[Optional[float]]:
+    """Kaufman's Adaptive Moving Average (the doc's 'Moving Average Adaptive').
+
+    Efficiency ratio ER = |C_t - C_{t-N}| / sum(|C_i - C_{i-1}|) over the last
+    N changes; smoothing constant sc = (ER * (2/(fast+1) - 2/(slow+1)) +
+    2/(slow+1))^2, and AMA_t = AMA_{t-1} + sc * (C_t - AMA_{t-1}). Defaults
+    9/2/30 are the common Kaufman setting. The series seeds with the close at
+    the first bar that has N prior changes. A perfectly trending series has
+    ER = 1 (fastest smoothing), a perfectly flat one ER -> 0 (slowest); when
+    the denominator is 0 (no movement at all) ER is undefined and the value
+    is `None` - a flat-but-unchanged close is not a computable ratio.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    fastest = 2.0 / (fast + 1)
+    slowest = 2.0 / (slow + 1)
+    out: list[Optional[float]] = [None] * len(values)
+    ama_prev: Optional[float] = None
+    for i in range(period, len(values)):
+        c_now = values[i]
+        c_then = values[i - period]
+        window_changes = [
+            float(values[j]) - float(values[j - 1])
+            for j in range(i - period + 1, i + 1)
+            if values[j] is not None and values[j - 1] is not None
+        ]
+        if c_now is None or c_then is None or len(window_changes) != period:
+            ama_prev = None  # a gap restarts the recursion
+            continue
+        volatility = sum(abs(d) for d in window_changes)
+        if volatility == 0:
+            ama_prev = None
+            continue
+        er = abs(float(c_now) - float(c_then)) / volatility
+        sc = (er * (fastest - slowest) + slowest) ** 2
+        base = ama_prev if ama_prev is not None else float(c_now)
+        out[i] = base + sc * (float(c_now) - base)
+        ama_prev = out[i]
+    return out
+
+
+def ma_hamming(values: Sequence[Optional[float]], period: int = 20) -> list[Optional[float]]:
+    """Moving Average Hamming: weighted mean with Hamming-window weights.
+
+    w_i = 0.54 - 0.46 * cos(2 pi i / (period - 1)) for i = 0..period-1,
+    applied oldest -> newest. The window is symmetric, so the result is
+    phase-neutral like an SMA but with tapered ends. `None` during warm-up
+    and for windows containing a gap.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    weights = [
+        0.54 - 0.46 * math.cos(2.0 * math.pi * i / (period - 1))
+        for i in range(period)
+    ]
+    wsum = sum(weights)
+    out: list[Optional[float]] = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        window = values[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = sum(w * float(v) for w, v in zip(weights, window)) / wsum  # type: ignore[arg-type]
+    return out
+
+
+def ma_multiple(
+    closes: Sequence[Optional[float]], periods: Sequence[int] = (20, 50, 100, 200)
+) -> dict[str, list[Optional[float]]]:
+    """MA Multiple: the same SMA at several lengths, one series per length.
+
+    The doc: 'MA_i = MA(Close, N_i), for i = 1..k'. Keys are 'ma_multi_<N>'.
+    """
+    return {f"ma_multi_{p}": sma(closes, p) for p in periods}
+
+
+def ma_channel(
+    closes: Sequence[Optional[float]], period: int = 20, offset_pct: float = 10.0
+) -> dict[str, list[Optional[float]]]:
+    """MA Channel: middle = SMA(N), bands at MA +- offset.
+
+    The doc writes the offset in absolute price units; a fixed absolute band
+    is meaningless across symbols with different price scales, so the offset
+    is expressed as a percent of the MA itself (default 10% - upper =
+    MA * 1.10, lower = MA * 0.90). Keys: upper / middle / lower.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    middle = sma(closes, period)
+    k = offset_pct / 100.0
+    upper: list[Optional[float]] = [
+        None if m is None else m * (1.0 + k) for m in middle
+    ]
+    lower: list[Optional[float]] = [
+        None if m is None else m * (1.0 - k) for m in middle
+    ]
+    return {"upper": upper, "middle": middle, "lower": lower}
+
+
+def smma(values: Sequence[Optional[float]], period: int = 20) -> list[Optional[float]]:
+    """Smoothed Moving Average: SMMA_t = (SMMA_{t-1} * (N - 1) + Price_t) / N.
+
+    Identical recursion to Wilder's RMA (seeded by an SMA of the first N),
+    kept as a named entry because the doc lists it separately.
+    """
+    return rma(values, period)
+
+
+def lsma(values: Sequence[Optional[float]], period: int = 25) -> list[Optional[float]]:
+    """Least Squares Moving Average: the fitted regression value at the
+    window's newest bar (identical construction to the linear-regression
+    curve; kept as a named entry because the doc lists both)."""
+    return linreg_endpoint(values, period)
