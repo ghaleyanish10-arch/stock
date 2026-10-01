@@ -324,7 +324,17 @@ export const analytics = {
     plain<ScreenerResponse>(`/api/analytics/screener${qs(params)}`, { signal }),
   chart: (
     symbol: string,
-    params: { range?: string; mode?: string; indicators?: string } = {},
+    params: {
+      range?: string;
+      mode?: string;
+      indicators?: string;
+      /** Price basis: "as_traded" (default) or "adjusted". */
+      basis?: string;
+      /** Custom window start (YYYY-MM-DD); implies an ALL-style fetch. */
+      start?: string;
+      /** Custom window end (YYYY-MM-DD). */
+      end?: string;
+    } = {},
     signal?: AbortSignal,
   ) =>
     plain<ChartResponse>(`/api/analytics/chart/${encodeURIComponent(symbol)}${qs(params)}`, {

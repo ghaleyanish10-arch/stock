@@ -120,7 +120,17 @@ export type IndicatorToken =
   | "vol_index"
   | "hl_52w"
   | "bop"
-  | "correlation";
+  | "correlation"
+  /* Batch B doc #53-#56 + compare family (backend handlers exist; the picker
+     previously had no rows for them, so the buttons could not be clicked). */
+  | "median_price"
+  | "typical_price"
+  | "price_channel"
+  | "correlation_log"
+  | "ratio"
+  | "spread"
+  | "compare"
+  | "technical_ratings";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -150,6 +160,15 @@ export interface IndicatorDef {
   colors?: Partial<Record<IndicatorKey, string>>;
   /** One-line plain-language definition (from the Trading Indicators notes). */
   desc?: string;
+  /** Sessions the warm-up needs; the legend shows "needs N bars" when the
+   * window is shorter. Set only where it is meaningfully large. */
+  minHistory?: number;
+  /** Set when the indicator cannot work in this market at all; the legend
+   * shows this reason instead of a broken empty chip. */
+  disabledByDesign?: string;
+  /** Needs a second symbol via `compare=`; the backend reports the exact
+   * reason and the legend surfaces it. */
+  needsCompare?: boolean;
 }
 
 /** Selectable indicators, in picker order. */
@@ -434,6 +453,7 @@ export const INDICATORS: IndicatorDef[] = [
     label: "MA Multiple 20/50/100/200",
     color: "#90a4ae",
     pane: "overlay",
+    minHistory: 200,
     series: ["ma_multi_20", "ma_multi_50", "ma_multi_100", "ma_multi_200"],
     colors: { ma_multi_20: "#e57373", ma_multi_50: "#ffb74d", ma_multi_100: "#81c784", ma_multi_200: "#64b5f6" },
     desc: "Several SMAs of different lengths at once (20/50/100/200) - stacking them shows short- and long-term trend alignment at a glance.",
@@ -468,6 +488,7 @@ export const INDICATORS: IndicatorDef[] = [
     label: "GMMA Ribbon",
     color: "#78909c",
     pane: "overlay",
+    minHistory: 60,
     series: [
       "gmma_s3", "gmma_s5", "gmma_s8", "gmma_s10", "gmma_s12", "gmma_s15",
       "gmma_l30", "gmma_l35", "gmma_l40", "gmma_l45", "gmma_l50", "gmma_l60",
@@ -478,7 +499,7 @@ export const INDICATORS: IndicatorDef[] = [
     },
     desc: "Guppy Multiple MA - six fast EMAs (traders) over six slow EMAs (investors); compressed ribbons mark agreement, expanding ones mark transitions.",
   },
-  { key: "majority_rule", token: "majority_rule", label: "Majority Rule", color: "#5c6bc0", pane: "trend", series: ["majority_score"], desc: "Net vote of a fixed 7-condition basket (closes vs SMA20/50/100/EMA21, SMA20 vs 50, prior close, RSI 50-line): +7 fully bullish, -7 fully bearish. Payload includes how many conditions were computable." },
+  { key: "majority_rule", token: "majority_rule", label: "Majority Rule", color: "#5c6bc0", pane: "trend", minHistory: 200, series: ["majority_score"], desc: "Net vote of a fixed 7-condition basket (closes vs SMA20/50/100/EMA21, SMA20 vs 50, prior close, RSI 50-line): +7 fully bullish, -7 fully bearish. Payload includes how many conditions were computable." },
   { key: "trend_strength", token: "trend_strength", label: "Trend Strength 25/13", color: "#00897b", pane: "osc", series: ["trend_strength"], desc: "Smoothed directional price change over smoothed absolute change (x100) - TSI-style: high positive = strong uptrend, deep negative = strong downtrend." },
   {
     key: "zigzag",
@@ -573,19 +594,48 @@ export const INDICATORS: IndicatorDef[] = [
   { key: "vol_c2c", token: "vol_c2c", label: "Volatility C2C 20", color: "#795548", pane: "osc", series: ["vol_c2c_20"], desc: "Annualized standard deviation of daily log returns (20 bars, 252-day year) - the plain close-to-close volatility, in percent." },
   { key: "vol_zero_trend", token: "vol_zero_trend", label: "Volatility Zero Trend 20", color: "#827717", pane: "osc", series: ["vol_zero_trend_20"], desc: "Close-to-close volatility after removing the linear trend from log prices - a steady grind reports low, only back-and-forth counts." },
   { key: "vol_ohlc", token: "vol_ohlc", label: "Volatility OHLC 20", color: "#5d4037", pane: "osc", series: ["vol_ohlc_20"], desc: "Garman-Klass estimator from open/high/low/close: uses the day's range as well as its open-close move, so it reads volatility more efficiently than close-to-close." },
-  { key: "vol_index", token: "vol_index", label: "Volatility Index (N/A)", color: "#9e9e9e", pane: "trend", series: [], desc: "Not applicable: a volatility index needs option-implied data, and NEPSE publishes no derivatives or options series - the backend reports this token as disabled rather than faking a value." },
+  { key: "vol_index", token: "vol_index", label: "Volatility Index (N/A)", color: "#9e9e9e", pane: "trend", series: [], disabledByDesign: "needs option-implied data; NEPSE publishes no derivatives or options series", desc: "Not applicable: a volatility index needs option-implied data, and NEPSE publishes no derivatives or options series - the backend reports this token as disabled rather than faking a value." },
   {
     key: "hl_52w",
     token: "hl_52w",
     label: "52W High/Low",
     color: "#26c6da",
     pane: "overlay",
+    minHistory: 252,
     series: ["hl_52w_high", "hl_52w_low"],
     colors: { hl_52w_high: "#ef5350", hl_52w_low: "#26a69a" },
     desc: "Flat levels at the highest high and lowest low of the trailing 252 sessions - the classic 52-week range price is measured against.",
   },
   { key: "bop", token: "bop", label: "Balance of Power 14", color: "#5e35b1", pane: "osc", series: ["bop_14"], desc: "(Close - Open) / (High - Low), smoothed over 14 bars: who won each session's fight, buyers or sellers. Above 0 buyers dominate." },
-  { key: "correlation", token: "correlation", label: "Correlation 20", color: "#00897b", pane: "osc", series: ["correlation_20"], desc: "Rolling Pearson correlation with a second symbol (pass compare=SYM): +1 they move together, -1 they move opposite, 0 unrelated." },
+  { key: "correlation", token: "correlation", label: "Correlation 20", color: "#00897b", pane: "osc", series: ["correlation_20"], needsCompare: true, desc: "Rolling Pearson correlation with a second symbol (pass compare=SYM): +1 they move together, -1 they move opposite, 0 unrelated." },
+  { key: "median_price", token: "median_price", label: "Median Price", color: "#80deea", pane: "overlay", series: ["median_price"], desc: "(High + Low) / 2 - the candle's midline, the input behind Alligator and Awesome Oscillator." },
+  { key: "typical_price", token: "typical_price", label: "Typical Price", color: "#4dd0e1", pane: "overlay", series: ["typical_price"], desc: "(High + Low + Close) / 3 - the price VWAP and CCI are computed on; a slightly close-weighted candle mean." },
+  {
+    key: "price_channel",
+    token: "price_channel",
+    label: "Price Channel 20",
+    color: "#26c6da",
+    pane: "overlay",
+    series: ["price_channel_upper", "price_channel_middle", "price_channel_lower"],
+    colors: { price_channel_middle: "#00838f" },
+    minHistory: 20,
+    desc: "Highest high and lowest low over 20 sessions with the midpoint - a Donchian-style breakout channel expressed as percent of the mid.",
+  },
+  { key: "correlation_log", token: "correlation_log", label: "Correlation (Log) 20", color: "#00796b", pane: "osc", series: ["correlation_log_20"], needsCompare: true, desc: "Rolling correlation of LOG returns with a second symbol (pass compare=SYM) - scale-free, so it compares fairly across price levels." },
+  { key: "ratio", token: "ratio", label: "Ratio", color: "#5d4037", pane: "flow", series: ["ratio"], needsCompare: true, desc: "This symbol's close divided by a second symbol's close (pass compare=SYM) - a relative-strength pair ratio; rising = outperforming." },
+  { key: "spread", token: "spread", label: "Spread", color: "#6d4c41", pane: "flow", series: ["spread"], needsCompare: true, desc: "This symbol's close minus a second symbol's close (pass compare=SYM) - the absolute pair spread; converging = the gap is closing." },
+  { key: "compare", token: "compare", label: "Compare (Rebased)", color: "#8d6e63", pane: "flow", series: ["compare"], needsCompare: true, desc: "Both symbols rebased to 100 at the window start (pass compare=SYM) - who moved more, on one comparable scale." },
+  {
+    key: "technical_ratings",
+    token: "technical_ratings",
+    label: "Technical Ratings",
+    color: "#33691e",
+    pane: "trend",
+    series: ["tech_overall", "tech_ma_rating", "tech_osc_rating"],
+    colors: { tech_overall: "#33691e", tech_ma_rating: "#558b2f", tech_osc_rating: "#8bc34a" },
+    minHistory: 200,
+    desc: "Composite vote of 12 MA signals plus 8 oscillator signals (Technical Ratings doc #57): +1 strong buy .. -1 strong sell, with the MA and oscillator group averages drawn separately.",
+  },
 ];
 
 /** Default picker mix when nothing is stored. */

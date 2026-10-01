@@ -1,33 +1,41 @@
-/* Technical chart: Lightweight Charts wrapper + the Technical page chart card.
+/* Technical chart: Lightweight Charts (v5) wrapper + the Technical page card.
  *
  * Two exports:
- *   TechnicalChart       - the pure chart (candles, overlays, indicator panes,
- *                          corner labels, overlay legend). CompanyPage also
- *                          uses this directly.
- *   TechnicalChartCard   - the Phase 5/6 card the Technical page embeds: owns
- *                          the chart query, the header, the sticky toolbar
- *                          (range + picker), the range chip and the
- *                          skeleton/error states.
+ *   TechnicalChart       - the pure chart (candles, volume, overlays, indicator
+ *                          panes, tooltip, legend). CompanyPage also uses this.
+ *   TechnicalChartCard   - the card the Technical page embeds: owns the chart
+ *                          query, the header, the sticky toolbar (ranges +
+ *                          dates + basis + picker), skeleton/error states.
  *
- * Canvas colours: the chart paints onto <canvas>, which cannot resolve CSS
- * variables - the old build passed `var(--up)` straight to the library, every
- * fill silently failed, and all candles rendered black. Theme-dependent
- * colours are therefore resolved with getComputedStyle at draw time and
- * re-applied whenever the document's `data-theme` attribute changes.
- * Candle/indicator colours are literals from the registry palette family.
+ * Axis rule (fixes the "candles clipped / squashed" bug): ONLY the candle
+ * series participates in the price scale's autoscale. Every overlay line is
+ * created with `autoscaleInfoProvider: () => null`, so a 52-week pivot at
+ * 8,520 or a band around a broken series can never stretch the y-axis away
+ * from the visible candles. The y-domain is therefore always min(low)..max(high)
+ * of the visible candles (plus the library's small padding) and refits on zoom,
+ * pan, range and basis changes automatically. Nothing is clipped.
  *
- * Candle convention (Phase 6a): up = green, down = red. Note the app's ticker
- * elsewhere uses the NEPSE convention (up = red); flip CHART_UP/CHART_DOWN if
- * the app-wide convention should win here too.
+ * Colour rule (green up / red down): one source of truth, the CSS variables
+ * --up/--down/--flat (see theme.css + the trend-palette setting), resolved for
+ * canvas at draw time. `changeColor()` derives up/down/flat from the sign of
+ * close - ref where ref is chosen by the documented rule:
+ *   "prev_close" (default) - close vs previous session close, matching the
+ *     +/- change shown in tables and the header;
+ *   "open"                 - close vs open (intrabar direction).
+ * Candle body, wick and volume bar all use the same value. No other input.
+ *
+ * Indicators plot immediately: the picker toggles registry ids, the selection
+ * drives series creation locally (no page reload), each family gets its own
+ * pane, and a missing series shows its reason in the legend chip instead of
+ * leaving the user with a click that does nothing.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   createChart,
   IChartApi,
   ISeriesApi,
-  IPaneApi,
   LineStyle,
   CandlestickSeries,
   HistogramSeries,
@@ -39,28 +47,67 @@ import {
   HistogramData,
   DeepPartial,
   ChartOptions,
+  MouseEventParams,
+  LineSeriesOptions,
 } from "lightweight-charts";
 import type { ChartResponse, ChartSeries, IndicatorKey } from "../types";
 import { INDICATORS, INDICATOR_COLORS, DEFAULT_SELECTION, selectedToParam } from "../indicators";
 import type { IndicatorId } from "../indicators";
-import { analytics } from "../api";
-import { fmtNum, fmtPct, fmtSigned, fmtDate, isMissing } from "../format";
+import { analytics, market } from "../api";
+import { fmtNum, fmtPct, fmtSigned, fmtDate, fmtInt, isMissing } from "../format";
 import { ErrorState } from "./ui";
 import { useLiveQuotes } from "../useLiveQuotes";
 import type { LiveQuote } from "../api";
+import { COLOR_RULE_LABELS, COLOR_RULE_EVENT, loadColorRule, storeColorRule } from "../colorRule";
+import type { ColorRule } from "../colorRule";
 
-/** Explicit Phase 6a convention: up = green, down = red. */
-const CHART_UP = "#26a69a";
-const CHART_DOWN = "#ef5350";
+/** Palette for canvas: CSS vars resolved to concrete colours at draw time. */
+export function trendPalette(): { up: string; down: string; flat: string } {
+  const cs = getComputedStyle(document.documentElement);
+  const get = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
+  return {
+    up: get("--up", "#26a69a"),
+    down: get("--down", "#ef5350"),
+    flat: get("--flat", "#787b86"),
+  };
+}
 
-const RANGES = ["1M", "3M", "6M", "1Y", "ALL"] as const;
-const CHART_RANGE_KEY = "chart-range";
-const CHART_INDICATORS_KEY = "chart-indicators";
+/**
+ * Sign -> colour. The only colour decision in the chart; body, wick and
+ * volume bars all call this with the same value.
+ */
+export function changeColor(
+  delta: number | null | undefined,
+  pal: { up: string; down: string; flat: string },
+): string {
+  if (delta == null || !Number.isFinite(delta) || delta === 0) return pal.flat;
+  return delta > 0 ? pal.up : pal.down;
+}
 
-const compactFmt = new Intl.NumberFormat("en-US", {
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
+/** The comparison value a candle's close is judged against, per the rule. */
+export function changeRef(
+  rule: ColorRule,
+  open: number,
+  prevClose: number | null,
+): number {
+  // First visible bar has no previous session inside the window: fall back to
+  // the intrabar rule for that one bar rather than inventing a close.
+  return rule === "open" || prevClose == null ? open : prevClose;
+}
+
+/* -- live candle ------------------------------------------------------------ */
+
+/** A synthetic in-session candle built from the live poller quote. */
+export interface LiveCandle {
+  time: string; // YYYY-MM-DD session date
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/* -- hex -> rgba ------------------------------------------------------------ */
 
 /** Hex (#rgb/#rrggbb) -> rgba with the given alpha; other formats pass through. */
 function alpha(color: string, a: number): string {
@@ -76,7 +123,8 @@ function alpha(color: string, a: number): string {
   return c;
 }
 
-/** Theme tokens resolved for the canvas (they cannot stay as CSS vars). */
+/* -- theme tokens ------------------------------------------------------------ */
+
 function chartTheme() {
   const cs = getComputedStyle(document.documentElement);
   const get = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
@@ -116,16 +164,25 @@ function baseOptions(t: ThemeColors): DeepPartial<ChartOptions> {
       horzLines: { color: t.grid },
     },
     crosshair: crosshairOptions(t),
-    rightPriceScale: { borderColor: t.scaleBorder },
+    rightPriceScale: {
+      borderColor: t.scaleBorder,
+      // The candle domain always contains every visible high/low; padding is
+      // the library's default 10% margin around the autoscale range.
+      scaleMargins: { top: 0.08, bottom: 0.08 },
+    },
     timeScale: {
       borderColor: t.scaleBorder,
       timeVisible: false,
       secondsVisible: false,
+      rightOffset: 1,
+      barSpacing: 7,
       tickMarkFormatter: (time: number) =>
         new Date(time * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
     },
   } as DeepPartial<ChartOptions>;
 }
+
+/* -- payload helpers --------------------------------------------------------- */
 
 /** Zip a payload value array with the shared time axis, skipping nulls. */
 function toLineData(
@@ -153,25 +210,25 @@ interface ChartData {
   indicators: Partial<Record<IndicatorKey, (number | null)[]>>;
 }
 
-/** A synthetic in-session candle built from the live poller quote. */
-export interface LiveCandle {
-  time: string; // YYYY-MM-DD session date
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+/** Why a requested indicator has nothing to draw (legend chip shows it). */
+export type IndicatorStatus =
+  | { kind: "ok" }
+  | { kind: "empty"; reason: string }
+  | { kind: "loading" }
+  | { kind: "error"; reason: string };
 
-/* -- the pure chart -------------------------------------------------------- */
+/* -- the pure chart ----------------------------------------------------------- */
 
 /** Registry-driven renderer: every series comes from `INDICATORS` + `selected`. */
 export function TechnicalChart({
   data,
   selected,
   symbol,
-  onToggleOverlay,
+  onToggleIndicator,
   liveCandle,
+  marketClosed,
+  statusByKey,
+  showVolume = true,
 }: {
   data: ChartData;
   /** Selected registry ids; defaults to the classic mix. */
@@ -179,83 +236,101 @@ export function TechnicalChart({
   /** Symbol for the price-pane corner label. */
   symbol?: string;
   /** Called when a legend chip's remove (x) is clicked. */
-  onToggleOverlay?: (id: IndicatorId) => void;
+  onToggleIndicator?: (id: IndicatorId) => void;
   /** Live in-session tick appended after the last archived bar. */
   liveCandle?: LiveCandle | null;
+  /** True when the session is over: the header says so instead of LIVE. */
+  marketClosed?: boolean;
+  /** Backend-provided reasons for tokens that cannot render (D3). */
+  statusByKey?: Record<string, string>;
+  /** Show the volume pane (default true). */
+  showVolume?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const labelRefs = useRef<(HTMLDivElement | null)[]>([]);
   const valueSpans = useRef(new Map<string, HTMLSpanElement>());
+  const ohlcRef = useRef<ChartSeries | null>(null);
+  const [colorRule, setColorRuleState] = useState<ColorRule>(() => loadColorRule());
+  // Bumped whenever the theme (or palette) changes so memoised colours rebuild.
+  const [themeTick, setThemeTick] = useState(0);
+  const [tooltip, setTooltip] = useState<{
+    x: number;
+    y: number;
+    row: {
+      date: string;
+      open: number | null;
+      high: number | null;
+      low: number | null;
+      close: number | null;
+      chg: number | null;
+      chgPct: number | null;
+      volume: number | null;
+    } | null;
+  } | null>(null);
+
+  // Re-render with the new palette when the up/down colour rule or theme changes.
+  useEffect(() => {
+    const onRule = () => {
+      setColorRuleState(loadColorRule());
+      setThemeTick((t) => t + 1);
+    };
+    window.addEventListener(COLOR_RULE_EVENT, onRule);
+    const obs = new MutationObserver(onRule);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-trend"] });
+    return () => {
+      window.removeEventListener(COLOR_RULE_EVENT, onRule);
+      obs.disconnect();
+    };
+  }, []);
 
   // One selection drives everything: default keeps the classic mix for callers
   // that do not pass a picker state.
-  const selection = new Set<IndicatorId>(selected ?? DEFAULT_SELECTION);
-  const overlayDefs = INDICATORS.filter(
-    (d) => (d.pane === "overlay" || d.pane === "cloud") && selection.has(d.key),
+  const selection = useMemo(() => new Set<IndicatorId>(selected ?? DEFAULT_SELECTION), [selected]);
+  const activeDefs = useMemo(
+    () => INDICATORS.filter((d) => selection.has(d.key)),
+    [selection],
   );
-  const flowDefs = INDICATORS.filter((d) => d.pane === "flow" && selection.has(d.key));
-  const trendDefs = INDICATORS.filter((d) => d.pane === "trend" && selection.has(d.key));
+  const overlayDefs = activeDefs.filter((d) => d.pane === "overlay" || d.pane === "cloud");
+  const flowDefs = activeDefs.filter((d) => d.pane === "flow");
+  const trendDefs = activeDefs.filter((d) => d.pane === "trend");
   const rsiOn = selection.has("rsi_14");
   const macdOn = selection.has("macd");
   const trixOn = selection.has("trix_15");
-  // Bounded 0-100 oscillators (Stochastic, StochRSI, Williams %R, Ultimate
-  // Osc) share one pane with RSI-style 20/80 guides, per family its own
-  // price scale so units never fight.
-  const oscDefs = INDICATORS.filter((d) => d.pane === "osc" && selection.has(d.key));
+  // Bounded 0-100 oscillators (Stochastic, StochRSI, Williams %R, Ultimate Osc,
+  // and every other `osc` registry row) share one pane with 20/80 guides, per
+  // family its own price scale so units never fight.
+  const oscDefs = activeDefs.filter((d) => d.pane === "osc");
 
-  // Pane layout: price ~60%, volume ~10%, RSI/MACD ~15% each (Phase 6f);
-  // optional TRIX/trend/flow panes get a smaller slice each. Expressed as a
-  // fixed pixel height for the container plus relative stretch factors.
+  const pal = useMemo(() => trendPalette(), [colorRule, themeTick]);
+
+  // Pane layout: price, volume, then a slice per sub-pane. Expressed as
+  // stretch factors; the container height grows with each active pane.
   const extraPanes =
     (trixOn ? 1 : 0) + (trendDefs.length ? 1 : 0) + (flowDefs.length ? 1 : 0) + (oscDefs.length ? 1 : 0);
   const subPanes = 1 + (rsiOn ? 1 : 0) + (macdOn ? 1 : 0);
   const chartHeight = 320 + subPanes * 100 + extraPanes * 110;
 
-  // Corner-label rows, one per pane, in the exact order the effect creates
-  // panes; values are filled in by the crosshair handler.
-  const paneLabels: { id: string; items: { key: string; name: string; color?: string }[] }[] = [
-    { id: "price", items: [{ key: "close", name: symbol || "Price" }] },
-    { id: "volume", items: [{ key: "vol", name: "VOL" }] },
-  ];
-  if (rsiOn) {
-    paneLabels.push({ id: "rsi", items: [{ key: "rsi_14", name: "RSI 14", color: INDICATOR_COLORS.rsi_14 }] });
-  }
-  if (macdOn) {
-    paneLabels.push({
-      id: "macd",
-      items: [
-        { key: "macd", name: "MACD", color: INDICATOR_COLORS.macd },
-        { key: "macd_signal", name: "SIG", color: INDICATOR_COLORS.macd_signal },
-        { key: "macd_histogram", name: "HIST", color: INDICATOR_COLORS.macd_histogram },
-      ],
-    });
-  }
-  if (trixOn) {
-    paneLabels.push({ id: "trix", items: [{ key: "trix_15", name: "TRIX 15", color: INDICATOR_COLORS.trix_15 }] });
-  }
-  if (oscDefs.length) {
-    paneLabels.push({
-      id: "osc",
-      items: oscDefs.map((d) => ({
-        key: d.series[0],
-        name: d.series.length > 1 ? `${d.label} K` : d.label,
-        color: d.color,
-      })),
-    });
-  }
-  if (trendDefs.length) {
-    paneLabels.push({
-      id: "trend",
-      items: trendDefs.map((d) => ({ key: d.series[0], name: d.label, color: d.color })),
-    });
-  }
-  if (flowDefs.length) {
-    paneLabels.push({
-      id: "flow",
-      items: flowDefs.map((d) => ({ key: d.series[0], name: d.label, color: d.color })),
-    });
-  }
+  // Legend rows: one chip per active registry entry, in picker order.
+  const legendRows = activeDefs.map((def) => {
+    const seriesValues = def.series.map((k) => data.indicators[k]);
+    const hasAnyData = seriesValues.some((v) => (v ?? []).some((x) => !isMissing(x)));
+    const keysMissing = def.series.filter((k) => !data.indicators[k]);
+    // The backend keys `disabled` by token name, not payload series key.
+    const backendReason =
+      statusByKey?.[def.key] ?? def.series.map((k) => statusByKey?.[k]).find(Boolean);
+    let status: IndicatorStatus = { kind: "ok" };
+    if (!hasAnyData) {
+      if (backendReason) status = { kind: "error", reason: backendReason };
+      else if (def.disabledByDesign) status = { kind: "error", reason: def.disabledByDesign };
+      else if (def.minHistory && (data.series.dates.length < def.minHistory))
+        status = { kind: "error", reason: `needs ${def.minHistory} bars, window has ${data.series.dates.length}` };
+      else if (keysMissing.length)
+        status = { kind: "empty", reason: "not in this response (token missing server-side)" };
+      else status = { kind: "empty", reason: "no value in this window yet (warm-up)" };
+    }
+    return { def, latest: seriesValues.map((v) => lastNonNull(v ?? [])), status };
+  });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -264,57 +339,60 @@ export function TechnicalChart({
     const t = chartTheme();
     const chart = createChart(container, baseOptions(t));
     chartRef.current = chart;
+    // Dev-only handle for the parity page and manual verification.
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__tcChart = chart;
+    }
 
-    const paneApis: IPaneApi<Time>[] = [];
-    let paneIndex = 0;
-
-    // Pane 0: price candles + overlay lines (price ~60% via default stretch 1).
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: CHART_UP,
-      downColor: CHART_DOWN,
-      borderUpColor: CHART_UP,
-      borderDownColor: CHART_DOWN,
-      wickUpColor: CHART_UP,
-      wickDownColor: CHART_DOWN,
+    /** Overlays must never stretch the candle axis (the clipping bug). */
+    const NO_AUTOSCALE = () => null;
+    const overlayLineOpts = (color: string): DeepPartial<LineSeriesOptions> => ({
+      color,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      autoscaleInfoProvider: NO_AUTOSCALE,
     });
+
+    // Pane 0: price candles (the only autoscale participant) + overlay lines.
+    const candleSeries = chart.addSeries(CandlestickSeries, {}, 0);
 
     const overlays: { key: IndicatorKey; api: ISeriesApi<"Line"> }[] = [];
     for (const def of overlayDefs) {
       for (const key of def.series) {
+        const values = data.indicators[key];
+        if (!values || !values.some((v) => !isMissing(v))) continue; // draw nothing; legend explains
         overlays.push({
           key,
           api: chart.addSeries(
             LineSeries,
-            {
-              color: def.colors?.[key] ?? def.color,
-              lineWidth: 1,
-              priceScaleId: "right",
-              priceLineVisible: false,
-            },
+            overlayLineOpts(def.colors?.[key] ?? def.color),
             0,
           ),
         });
       }
     }
 
-    // Pane 1: volume (~10%), semi-transparent up/down coloured bars.
-    paneIndex += 1;
-    const volumePane = chart.addPane();
-    paneApis.push(volumePane);
-    volumePane.setStretchFactor(0.3125);
-    const volumeSeries = chart.addSeries(
-      HistogramSeries,
-      { priceScaleId: "volume", priceFormat: { type: "volume" } },
-      paneIndex,
-    );
+    // Pane 1: volume, coloured by the same rule as the candles. Optional:
+    // the card's Volume checkbox hides the pane entirely when unchecked.
+    let paneIndex = 1;
+    const volumePane = showVolume ? chart.addPane() : null;
+    if (volumePane) volumePane.setStretchFactor(1.1);
+    const volumeSeries = volumePane
+      ? chart.addSeries(
+          HistogramSeries,
+          { priceScaleId: "volume", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false },
+          paneIndex,
+        )
+      : null;
+    if (!volumePane) paneIndex = 0; // oscillator panes shift up one slot
 
-    // RSI pane (~15%) with 30/70 guide lines.
+    // RSI pane with 30/70 guides.
     let rsiSeries: ISeriesApi<"Line"> | null = null;
     if (rsiOn) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.3125);
+      pane.setStretchFactor(1.4);
       rsiSeries = chart.addSeries(
         LineSeries,
         {
@@ -337,28 +415,27 @@ export function TechnicalChart({
       }
     }
 
-    // MACD pane (~15%): line + signal + sign-coloured histogram.
+    // MACD pane: line + signal + sign-coloured histogram.
     let macdSeries: ISeriesApi<"Line"> | null = null;
     let macdSignalSeries: ISeriesApi<"Line"> | null = null;
     let macdHistSeries: ISeriesApi<"Histogram"> | null = null;
     if (macdOn) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.3125);
+      pane.setStretchFactor(1.4);
       macdSeries = chart.addSeries(
         LineSeries,
-        { color: INDICATOR_COLORS.macd, lineWidth: 1, priceScaleId: "macd" },
+        { color: INDICATOR_COLORS.macd, lineWidth: 1, priceScaleId: "macd", priceLineVisible: false },
         paneIndex,
       );
       macdSignalSeries = chart.addSeries(
         LineSeries,
-        { color: INDICATOR_COLORS.macd_signal, lineWidth: 1, priceScaleId: "macd" },
+        { color: INDICATOR_COLORS.macd_signal, lineWidth: 1, priceScaleId: "macd", priceLineVisible: false, lastValueVisible: false },
         paneIndex,
       );
       macdHistSeries = chart.addSeries(
         HistogramSeries,
-        { priceScaleId: "macd" },
+        { priceScaleId: "macd", lastValueVisible: false, priceLineVisible: false },
         paneIndex,
       );
     }
@@ -368,26 +445,25 @@ export function TechnicalChart({
     if (trixOn) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.34);
+      pane.setStretchFactor(1.4);
       trixSeries = chart.addSeries(
         LineSeries,
-        { color: INDICATOR_COLORS.trix_15, lineWidth: 1, priceScaleId: "trix" },
+        { color: INDICATOR_COLORS.trix_15, lineWidth: 1, priceScaleId: "trix", priceLineVisible: false },
         paneIndex,
       );
     }
 
-    // Bounded-oscillator pane (0-100 family) with 20/80 guides: every family
-    // gets its own price scale, like the trend pane.
+    // Bounded-oscillator pane (0-100 family) with 20/80 guides.
     const oscSeriesMap: Record<string, ISeriesApi<"Line">> = {};
     if (oscDefs.length) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.34);
+      pane.setStretchFactor(1.4);
       let firstOscSeries: ISeriesApi<"Line"> | null = null;
       for (const def of oscDefs) {
         for (const key of def.series) {
+          const values = data.indicators[key];
+          if (!values || !values.some((v) => !isMissing(v))) continue;
           const s = chart.addSeries(
             LineSeries,
             {
@@ -395,6 +471,7 @@ export function TechnicalChart({
               lineWidth: 1,
               priceScaleId: `osc-${def.key}`,
               priceLineVisible: false,
+              lastValueVisible: false,
             },
             paneIndex,
           );
@@ -403,7 +480,7 @@ export function TechnicalChart({
         }
       }
       for (const level of [20, 80]) {
-        firstOscSeries!.createPriceLine({
+        firstOscSeries?.createPriceLine({
           price: level,
           color: t.crosshair,
           lineWidth: 1,
@@ -414,16 +491,17 @@ export function TechnicalChart({
       }
     }
 
-    // Trend-strength pane: ADX/DMI, Aroon and Vortex share one pane, each
-    // family with its own price scale (percent 0-100 vs ratios around 1.0).
+    // Trend-strength pane: ADX/DMI, Aroon, Vortex and friends share one pane,
+    // each family with its own price scale (percents vs ratios).
     const trendSeriesMap: Record<string, ISeriesApi<"Line">> = {};
     if (trendDefs.length) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.34);
+      pane.setStretchFactor(1.4);
       for (const def of trendDefs) {
         for (const key of def.series) {
+          const values = data.indicators[key];
+          if (!values || !values.some((v) => !isMissing(v))) continue;
           trendSeriesMap[key] = chart.addSeries(
             LineSeries,
             {
@@ -431,6 +509,7 @@ export function TechnicalChart({
               lineWidth: 1,
               priceScaleId: `trend-${def.key}`,
               priceLineVisible: false,
+              lastValueVisible: false,
             },
             paneIndex,
           );
@@ -444,10 +523,11 @@ export function TechnicalChart({
     if (flowDefs.length) {
       paneIndex += 1;
       const pane = chart.addPane();
-      paneApis.push(pane);
-      pane.setStretchFactor(0.34);
+      pane.setStretchFactor(1.4);
       for (const def of flowDefs) {
         for (const key of def.series) {
+          const values = data.indicators[key];
+          if (!values || !values.some((v) => !isMissing(v))) continue;
           flowSeriesMap[key] = chart.addSeries(
             LineSeries,
             {
@@ -455,6 +535,7 @@ export function TechnicalChart({
               lineWidth: 1,
               priceScaleId: `flow-${key}`,
               priceLineVisible: false,
+              lastValueVisible: false,
             },
             paneIndex,
           );
@@ -464,13 +545,15 @@ export function TechnicalChart({
 
     // -- populate data ------------------------------------------------------
     const { series, indicators } = data;
+    ohlcRef.current = series;
     const n = series.dates.length;
     const times: UTCTimestamp[] = series.dates.map(
-      (d) => Math.floor(new Date(d).getTime() / 1000) as UTCTimestamp,
+      (d) => (Math.floor(new Date(d).getTime() / 1000) as UTCTimestamp),
     );
 
     const candleData: CandlestickData<UTCTimestamp>[] = [];
     const volumeData: HistogramData<UTCTimestamp>[] = [];
+    let prevClose: number | null = null;
     for (let i = 0; i < n; i++) {
       const o = series.open[i];
       const h = series.high[i];
@@ -479,52 +562,68 @@ export function TechnicalChart({
       const v = series.volume[i];
 
       if (!isMissing(o) && !isMissing(h) && !isMissing(l) && !isMissing(c)) {
-        candleData.push({ time: times[i], open: o!, high: h!, low: l!, close: c! });
-      }
-      if (!isMissing(v)) {
-        const up = !isMissing(c) && !isMissing(o) && c! >= o!;
-        volumeData.push({
+        // The colour rule: one delta decides body, wick AND the volume bar.
+        const ref = changeRef(colorRule, o!, prevClose);
+        const col = changeColor(c! - ref, pal);
+        candleData.push({
           time: times[i],
-          value: v!,
-          color: up ? alpha(CHART_UP, 0.45) : alpha(CHART_DOWN, 0.45),
+          open: o!,
+          high: h!,
+          low: l!,
+          close: c!,
+          color: col,
+          borderColor: col,
+          wickColor: col,
         });
+        if (!isMissing(v)) {
+          volumeData.push({ time: times[i], value: v!, color: alpha(col, 0.5) });
+        }
+        prevClose = c!;
       }
     }
     candleSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
+    volumeSeries?.setData(volumeData);
 
     // Live in-session candle: appended only when its session date is not
     // already archived (the nightly ingest adds the real bar; no duplicates).
     if (liveCandle && n > 0) {
-      const t = Math.floor(new Date(liveCandle.time).getTime() / 1000) as UTCTimestamp;
+      const lt = Math.floor(new Date(liveCandle.time).getTime() / 1000) as UTCTimestamp;
       const lastT = times[n - 1];
-      if (t > lastT) {
+      const liveRef = changeRef(colorRule, liveCandle.open, prevClose);
+      const liveCol = changeColor(liveCandle.close - liveRef, pal);
+      if (lt > lastT) {
         candleData.push({
-          time: t,
+          time: lt,
           open: liveCandle.open,
           high: liveCandle.high,
           low: liveCandle.low,
           close: liveCandle.close,
+          color: liveCol,
+          borderColor: liveCol,
+          wickColor: liveCol,
         });
         candleSeries.setData(candleData);
         if (liveCandle.volume > 0) {
           volumeData.push({
-            time: t,
+            time: lt,
             value: liveCandle.volume,
-            color: alpha(liveCandle.close >= liveCandle.open ? CHART_UP : CHART_DOWN, 0.45),
+            color: alpha(liveCol, 0.5),
           });
-          volumeSeries.setData(volumeData);
+          volumeSeries?.setData(volumeData);
         }
-      } else if (t === lastT) {
+      } else if (lt === lastT) {
         // Same session already archived: overlay the live close onto that bar.
-        const i = candleData.findIndex((c) => c.time === t);
+        const i = candleData.findIndex((c) => c.time === lt);
         if (i >= 0) {
-          candleData[i] = {
+          const merged = {
             ...candleData[i],
             close: liveCandle.close,
             high: Math.max(candleData[i].high, liveCandle.high),
             low: Math.min(candleData[i].low, liveCandle.low),
           };
+          const mRef = changeRef(colorRule, merged.open, i > 0 ? candleData[i - 1].close : null);
+          merged.color = merged.borderColor = merged.wickColor = changeColor(merged.close - mRef, pal);
+          candleData[i] = merged;
           candleSeries.setData(candleData);
         }
       }
@@ -544,7 +643,8 @@ export function TechnicalChart({
           macdHistData.push({
             time: times[i],
             value: macdHistVals[i]!,
-            color: alpha(macdHistVals[i]! >= 0 ? CHART_UP : CHART_DOWN, 0.8),
+            // Histogram sign colour: positive bars up, negative bars down.
+            color: alpha(changeColor(macdHistVals[i]!, pal), 0.8),
           });
         }
       }
@@ -567,81 +667,50 @@ export function TechnicalChart({
       }
     }
 
-    // -- corner labels: registry of (pane, item) -> series + formatter -------
-    type Item = {
+    // Default view: the whole window visible, nothing clipped. The library
+    // refits the (candle-only) autoscale domain to the visible bars on zoom,
+    // pan and range changes, so this is the only explicit fit needed.
+    chart.timeScale().fitContent();
+
+    // -- corner labels: price and volume values follow the crosshair --------
+
+    const cornerItems: {
       pi: number;
       ii: number;
       api: ISeriesApi<"Line"> | ISeriesApi<"Histogram"> | ISeriesApi<"Candlestick">;
       fmt: (v: number) => string;
       latest: number | null;
-    };
-    const items: Item[] = [];
-    // The live candle's close, when present, is the most current known price
-    // (it may also overlay an already-archived same-day bar).
-    items.push({ pi: 0, ii: 0, api: candleSeries, fmt: (v) => fmtNum(v, 2), latest: liveCandle ? liveCandle.close : lastNonNull(series.close) });
-    items.push({ pi: 1, ii: 0, api: volumeSeries, fmt: (v) => compactFmt.format(v), latest: liveCandle && liveCandle.volume > 0 ? liveCandle.volume : lastNonNull(series.volume) });
-
-    let nextPane = 2;
-    if (rsiOn) {
-      items.push({ pi: nextPane, ii: 0, api: rsiSeries!, fmt: (v) => fmtNum(v, 2), latest: lastNonNull(indicators.rsi_14) });
-      nextPane += 1;
-    }
-    if (macdOn) {
-      items.push({ pi: nextPane, ii: 0, api: macdSeries!, fmt: (v) => fmtNum(v, 2), latest: lastNonNull(indicators.macd) });
-      items.push({ pi: nextPane, ii: 1, api: macdSignalSeries!, fmt: (v) => fmtNum(v, 2), latest: lastNonNull(indicators.macd_signal) });
-      items.push({ pi: nextPane, ii: 2, api: macdHistSeries!, fmt: (v) => fmtNum(v, 2), latest: lastNonNull(indicators.macd_histogram) });
-      nextPane += 1;
-    }
-    if (trixOn) {
-      items.push({ pi: nextPane, ii: 0, api: trixSeries!, fmt: (v) => fmtNum(v, 2), latest: lastNonNull(indicators.trix_15) });
-      nextPane += 1;
-    }
-    if (oscDefs.length) {
-      oscDefs.forEach((def, ii) => {
-        items.push({
-          pi: nextPane,
-          ii,
-          api: oscSeriesMap[def.series[0]],
-          fmt: (v) => fmtNum(v, 2),
-          latest: lastNonNull(indicators[def.series[0]]),
-        });
-      });
-      nextPane += 1;
-    }
-    if (trendDefs.length) {
-      trendDefs.forEach((def, ii) => {
-        items.push({
-          pi: nextPane,
-          ii,
-          api: trendSeriesMap[def.series[0]],
-          fmt: (v) => fmtNum(v, 2),
-          latest: lastNonNull(indicators[def.series[0]]),
-        });
-      });
-      nextPane += 1;
-    }
-    if (flowDefs.length) {
-      flowDefs.forEach((def, ii) => {
-        items.push({
-          pi: nextPane,
-          ii,
-          api: flowSeriesMap[def.series[0]],
-          fmt: (v) => compactFmt.format(v),
-          latest: lastNonNull(indicators[def.series[0]]),
-        });
-      });
-    }
-
+    }[] = [
+      {
+        pi: 0,
+        ii: 0,
+        api: candleSeries,
+        fmt: (v) => fmtNum(v, 2),
+        latest: liveCandle ? liveCandle.close : lastNonNull(series.close),
+      },
+      ...(volumeSeries
+        ? [
+            {
+              pi: 1,
+              ii: 0,
+              api: volumeSeries,
+              fmt: (v: number) => fmtInt(v),
+              latest: liveCandle && liveCandle.volume > 0 ? liveCandle.volume : lastNonNull(series.volume),
+            },
+          ]
+        : []),
+    ];
     const showLatest = () => {
-      for (const it of items) {
+      for (const it of cornerItems) {
         const el = valueSpans.current.get(`${it.pi}:${it.ii}`);
         if (el && it.latest != null) el.textContent = it.fmt(it.latest);
       }
     };
     showLatest();
 
-    chart.subscribeCrosshairMove((param) => {
-      for (const it of items) {
+    chart.subscribeCrosshairMove((param: MouseEventParams<Time>) => {
+      // Corner values.
+      for (const it of cornerItems) {
         const el = valueSpans.current.get(`${it.pi}:${it.ii}`);
         if (!el) continue;
         if (!param.time) {
@@ -652,10 +721,53 @@ export function TechnicalChart({
         const v = d ? (d.close ?? d.value ?? null) : null;
         el.textContent = v == null ? (it.latest != null ? it.fmt(it.latest) : "–") : it.fmt(v);
       }
+      // Tooltip row for the hovered session.
+      if (!param.time || !param.point || !ohlcRef.current) {
+        setTooltip(null);
+        return;
+      }
+      const s = ohlcRef.current;
+      const t0 = param.time as number;
+      let idx = -1;
+      for (let i = 0; i < s.dates.length; i++) {
+        if (times[i] === t0) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx < 0) {
+        setTooltip(null);
+        return;
+      }
+      const o = s.open[idx];
+      const h = s.high[idx];
+      const l = s.low[idx];
+      const c = s.close[idx];
+      // Change vs the previous session with a close (matches the header rule).
+      let p = idx - 1;
+      while (p >= 0 && isMissing(s.close[p])) p--;
+      const prevC = p >= 0 ? s.close[p] : null;
+      const chg = c != null && prevC != null ? c - prevC : null;
+      const chgPct = chg != null && prevC ? (chg / prevC) * 100 : null;
+      const row = {
+        date: s.dates[idx],
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        chg,
+        chgPct,
+        volume: s.volume[idx],
+      };
+      const wrap = container.getBoundingClientRect();
+      const x = Math.min(Math.max(param.point.x + 14, 8), Math.max(wrap.width - 190, 8));
+      const y = Math.min(Math.max(param.point.y + 12, 8), Math.max(wrap.height - 120, 8));
+      setTooltip({ x, y, row });
     });
 
     // Pane label tops follow the real pane geometry (stretch factors), so
     // recompute on every container resize.
+    const paneApis = chart.panes().slice(1);
     const layoutLabels = () => {
       const total = container.clientHeight;
       const others = paneApis.reduce((s, p) => s + p.getHeight(), 0);
@@ -676,11 +788,12 @@ export function TechnicalChart({
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
+      if (import.meta.env.DEV) delete (window as unknown as Record<string, unknown>).__tcChart;
     };
-    // `selected` drives every def list above; `data` and the live tick rebuild
-    // the chart.
+    // `selected` drives every def list above; `data`, the live tick, the
+    // colour rule and the palette rebuild the chart.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, selected, liveCandle]);
+  }, [data, selection, liveCandle, colorRule, pal]);
 
   // Re-apply theme-dependent colours when the app switches light/dark/system:
   // the document attribute is the single source of truth (see theme.ts).
@@ -703,62 +816,114 @@ export function TechnicalChart({
     return () => obs.disconnect();
   }, []);
 
-  const legendLatest = (key: IndicatorKey) => lastNonNull(data.indicators[key]);
-
   return (
     <div className="tc-chart-wrap">
       <div ref={containerRef} className="tc-chart" style={{ height: chartHeight }} />
 
-      {/* Corner labels, one row per pane, values follow the crosshair. */}
-      {paneLabels.map((pane, pi) => (
-        <div
-          key={pane.id}
-          className="tc-pane-label"
-          ref={(el) => {
-            labelRefs.current[pi] = el;
-          }}
-        >
-          {pane.items.map((it, ii) => (
-            <span key={it.key} className="tc-pl-item">
-              {it.color && <span className="dot" style={{ background: it.color }} />}
-              <span className="tc-pl-name">{it.name}</span>
-              <span
-                ref={(el) => {
-                  const k = `${pi}:${ii}`;
-                  if (el) valueSpans.current.set(k, el);
-                  else valueSpans.current.delete(k);
-                }}
-              >
-                –
-              </span>
-            </span>
-          ))}
-        </div>
-      ))}
+      {/* Corner labels: price and volume values follow the crosshair. */}
+      <div
+        className="tc-pane-label"
+        ref={(el) => {
+          labelRefs.current[0] = el;
+        }}
+      >
+        <span className="tc-pl-item">
+          <span className="tc-pl-name">{symbol || "Price"}</span>
+          <span
+            ref={(el) => {
+              const k = "0:0";
+              if (el) valueSpans.current.set(k, el);
+              else valueSpans.current.delete(k);
+            }}
+          >
+            –
+          </span>
+        </span>
+      </div>
+      <div
+        className="tc-pane-label"
+        ref={(el) => {
+          labelRefs.current[1] = el;
+        }}
+      >
+        <span className="tc-pl-item">
+          <span className="tc-pl-name">VOL</span>
+          <span
+            ref={(el) => {
+              const k = "1:0";
+              if (el) valueSpans.current.set(k, el);
+              else valueSpans.current.delete(k);
+            }}
+          >
+            –
+          </span>
+        </span>
+      </div>
 
-      {/* Price-pane legend for active overlays: dot, label, latest value, x. */}
-      {overlayDefs.length > 0 && (
+      {/* Active-indicator legend: dot, label, latest value(s), status, x. */}
+      {legendRows.length > 0 && (
         <div className="tc-legend">
-          {overlayDefs.map((def) => (
-            <span key={def.key} className="tc-legend-chip" style={{ borderColor: def.color }}>
-              <span className="dot" style={{ background: def.color }} />
-              <span>{def.label}</span>
-              {def.series.map((k) => {
-                const v = legendLatest(k);
-                return <span key={k}>{v == null ? "–" : fmtNum(v, 2)}</span>;
-              })}
-              {onToggleOverlay && (
+          {legendRows.map(({ def, latest, status }) => (
+            <span
+              key={def.key}
+              className={`tc-legend-chip${status.kind !== "ok" ? " warn" : ""}`}
+              style={{ borderColor: def.color }}
+              title={def.desc}
+            >
+              {def.series.map((k) => (
+                <span key={k} className="dot" style={{ background: def.colors?.[k] ?? def.color }} />
+              ))}
+              <span className="tc-legend-name">{def.label}</span>
+              {latest.map((v, i) => (
+                <span key={i}>{v == null ? "–" : fmtNum(v, 2)}</span>
+              ))}
+              {status.kind !== "ok" && (
+                <span className="tc-legend-status" title={status.reason}>
+                  ⚠ {status.reason}
+                </span>
+              )}
+              {onToggleIndicator && (
                 <button
                   type="button"
                   className="tc-legend-x"
                   aria-label={`Remove ${def.label}`}
-                  onClick={() => onToggleOverlay(def.key)}
+                  onClick={() => onToggleIndicator(def.key)}
                 >
                   ×
                 </button>
               )}
             </span>
           ))}
+          {liveCandle ? (
+            <span className="tc-live-note">last point provisional (live session)</span>
+          ) : (
+            marketClosed && <span className="tc-live-note">market closed - final session values</span>
+          )}
+        </div>
+      )}
+
+      {/* OHLCV tooltip; rendered by the crosshair handler. */}
+      {tooltip?.row && (
+        <div className="tc-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+          <div className="tc-tooltip-date">{tooltip.row.date}</div>
+          <div className="tc-tooltip-grid">
+            <span>O</span>
+            <span>{fmtNum(tooltip.row.open)}</span>
+            <span>H</span>
+            <span>{fmtNum(tooltip.row.high)}</span>
+            <span>L</span>
+            <span>{fmtNum(tooltip.row.low)}</span>
+            <span>C</span>
+            <span className={tooltip.row.chg == null ? "" : tooltip.row.chg > 0 ? "up" : tooltip.row.chg < 0 ? "down" : "flat"}>
+              {fmtNum(tooltip.row.close)}
+            </span>
+            <span>Chg</span>
+            <span className={tooltip.row.chg == null ? "" : tooltip.row.chg > 0 ? "up" : tooltip.row.chg < 0 ? "down" : "flat"}>
+              {fmtSigned(tooltip.row.chg)} ({fmtPct(tooltip.row.chgPct)})
+            </span>
+            <span>Vol</span>
+            <span>{tooltip.row.volume == null ? "–" : fmtInt(tooltip.row.volume)}</span>
+          </div>
         </div>
       )}
     </div>
@@ -767,26 +932,35 @@ export function TechnicalChart({
 
 /* -- the Technical page card ------------------------------------------------ */
 
-function loadSelected(): IndicatorId[] {
-  try {
-    const raw = window.localStorage.getItem(CHART_INDICATORS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    if (Array.isArray(parsed)) {
-      const valid = parsed.filter(
-        (k): k is IndicatorId => typeof k === "string" && INDICATORS.some((d) => d.key === k),
-      );
-      if (valid.length) return valid;
+function loadSelected(symbol: string): IndicatorId[] {
+  const keys = [`chart-indicators:${symbol}`, "chart-indicators"];
+  for (const key of keys) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed)) {
+        const valid = parsed.filter(
+          (k): k is IndicatorId => typeof k === "string" && INDICATORS.some((d) => d.key === k),
+        );
+        if (valid.length) return valid;
+      }
+    } catch {
+      /* fall through */
     }
-  } catch {
-    /* fall through to the default mix */
   }
   return DEFAULT_SELECTION;
 }
 
+const MAX_ACTIVE = 12;
+
+const RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
+const DEFAULT_RANGE = "3M";
+
 /** Chart header: symbol, name, last close, change and %, as-of date.
  * When a fresh live quote exists, LTP/change come from it and the header says
- * LIVE; otherwise the last archived close is shown. Never presents a stale
- * quote as live. */
+ * LIVE; otherwise the last archived close is shown with a "market closed" tag.
+ * Never presents a stale quote as live. Colours come from the up/down CSS
+ * variables (green up / red down, or the user's chosen alternative). */
 function ChartHeader({
   data,
   live,
@@ -807,25 +981,29 @@ function ChartHeader({
   const liveFresh =
     !!live && Date.now() - new Date(live.timestamp + "Z").getTime() <= LIVE_TTL_MS;
   const price = liveFresh ? live!.ltp : last;
-  const ref = liveFresh ? live!.change !== 0 || live!.change_pct !== 0
-    ? live!.ltp - live!.change
-    : prev : prev;
+  const ref =
+    liveFresh && (live!.change !== 0 || live!.change_pct !== 0)
+      ? live!.ltp - live!.change
+      : prev;
   const chg = price != null && ref != null ? price - ref : null;
   const pct = chg != null && ref ? (chg / ref) * 100 : null;
-  const up = (chg ?? 0) >= 0;
-  const tone = { color: up ? CHART_UP : CHART_DOWN };
+  // Class-based tone so the app-wide --up/--down variables decide the colour.
+  const cls = chg == null || chg === 0 ? "flat" : chg > 0 ? "up" : "down";
 
   return (
     <div className="tc-header">
       <span className="tc-symbol">{data.symbol}</span>
       {data.name && <span className="tc-name">{data.name}</span>}
-      <span className="tc-price" style={tone}>
+      <span className={`tc-price ${cls}`}>
         {fmtNum(price)}
       </span>
-      <span className="tc-chg" style={tone}>
+      <span className={`tc-chg ${cls}`}>
         {fmtSigned(chg)} ({fmtPct(pct)})
       </span>
       {liveFresh && <span className="tc-live-badge">LIVE</span>}
+      {!liveFresh && (
+        <span className="tc-closed-badge">market closed</span>
+      )}
       <span className="tc-asof">
         {liveFresh
           ? `live at ${new Date(live!.timestamp + "Z").toLocaleTimeString()}`
@@ -837,39 +1015,75 @@ function ChartHeader({
 
 /** Phase 5/6: the card embedded at the top of the Technical page. */
 export function TechnicalChartCard({ symbol }: { symbol: string }) {
-  const [selected, setSelected] = useState<IndicatorId[]>(loadSelected);
+  const [colorRule, setColorRuleState] = useState<ColorRule>(loadColorRule());
+  const [selected, setSelected] = useState<IndicatorId[]>(() => loadSelected(symbol));
   const [range, setRange] = useState<string>(() => {
     try {
-      return window.localStorage.getItem(CHART_RANGE_KEY) ?? "6M";
+      return window.localStorage.getItem("chart-range") ?? DEFAULT_RANGE;
     } catch {
-      return "6M";
+      return DEFAULT_RANGE;
     }
   });
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
+  const [basis, setBasis] = useState<"as_traded" | "adjusted">("as_traded");
+  const [showVolume, setShowVolume] = useState(true);
+  // Re-read when another surface (topbar, another chart) changes the rule.
+  useEffect(() => {
+    const onRule = () => setColorRuleState(loadColorRule());
+    window.addEventListener(COLOR_RULE_EVENT, onRule);
+    return () => window.removeEventListener(COLOR_RULE_EVENT, onRule);
+  }, []);
   const [chipHidden, setChipHidden] = useState(false);
+  const [capNotice, setCapNotice] = useState<string | null>(null);
 
+  // Selection is per symbol (D2): each ticker remembers its own mix.
   useEffect(() => {
     try {
-      window.localStorage.setItem(CHART_INDICATORS_KEY, JSON.stringify(selected));
+      window.localStorage.setItem(`chart-indicators:${symbol}`, JSON.stringify(selected));
     } catch {
       /* non-fatal */
     }
-  }, [selected]);
+  }, [selected, symbol]);
   useEffect(() => {
     try {
-      window.localStorage.setItem(CHART_RANGE_KEY, range);
+      window.localStorage.setItem("chart-range", range);
     } catch {
       /* non-fatal */
     }
   }, [range]);
   useEffect(() => setChipHidden(false), [symbol, range]);
 
-  const toggle = (id: IndicatorId) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id]));
+  const toggle = (id: IndicatorId) => {
+    setSelected((prev) => {
+      if (prev.includes(id)) return prev.filter((k) => k !== id);
+      if (prev.length >= MAX_ACTIVE) {
+        setCapNotice(`At most ${MAX_ACTIVE} indicators at once - remove one first.`);
+        return prev;
+      }
+      setCapNotice(null);
+      return [...prev, id];
+    });
+  };
+
+  const customDates = !!(fromDate || toDate);
+  const effRange = customDates ? "ALL" : range;
 
   const query = useQuery({
-    queryKey: ["chart", symbol, range, selected],
+    queryKey: ["chart", symbol, effRange, fromDate, toDate, basis, selected],
     queryFn: ({ signal }) =>
-      analytics.chart(symbol, { range, mode: "UNADJUSTED", indicators: selectedToParam(selected) }, signal),
+      analytics.chart(
+        symbol,
+        {
+          range: effRange,
+          mode: "UNADJUSTED",
+          basis,
+          indicators: selectedToParam(selected),
+          start: fromDate || undefined,
+          end: toDate || undefined,
+        },
+        signal,
+      ),
     enabled: !!symbol,
     staleTime: 60_000,
   });
@@ -878,7 +1092,17 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
   // Live tick for this symbol from the backend's shared poller (30s refresh;
   // one NEPSE call per interval server-side no matter how many tabs poll).
   const { quotes } = useLiveQuotes(symbol ? [symbol] : []);
-  const live = quotes.get(symbol) ?? null;
+  // Market-hours gate: the poller keeps serving its cached quote after hours,
+  // so the header would claim LIVE at 10pm. The app's market overview (same
+  // query key as the topbar's, so one fetch serves both) decides.
+  const { data: marketStatus } = useQuery({
+    queryKey: ["market-status"],
+    queryFn: ({ signal }) => market.overview(signal),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const marketOpen = marketStatus?.status.is_open;
+  const live = marketOpen === false ? null : (quotes.get(symbol) ?? null);
 
   // Synthetic in-session candle from the live quote, anchored on the previous
   // close so open/high/low are honest within what we know. Only shown when
@@ -916,13 +1140,85 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
             <button
               key={r}
               type="button"
-              className={`tc-range-btn${range === r ? " on" : ""}`}
-              onClick={() => setRange(r)}
+              className={`tc-range-btn${!customDates && range === r ? " on" : ""}`}
+              onClick={() => {
+                setRange(r);
+                setFromDate("");
+                setToDate("");
+              }}
             >
               {r}
             </button>
           ))}
         </div>
+        <div className="tc-dates" role="group" aria-label="Custom date range">
+          <input
+            type="date"
+            className="input tc-date-input"
+            aria-label="From date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => setFromDate(e.target.value)}
+          />
+          <span className="tc-date-dash">–</span>
+          <input
+            type="date"
+            className="input tc-date-input"
+            aria-label="To date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => setToDate(e.target.value)}
+          />
+          {customDates && (
+            <button
+              type="button"
+              className="tc-range-btn"
+              aria-label="Clear custom dates"
+              onClick={() => {
+                setFromDate("");
+                setToDate("");
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <label className="tc-ctl">
+          <span>Prices</span>
+          <select
+            className="input"
+            value={basis}
+            onChange={(e) => setBasis(e.target.value === "adjusted" ? "adjusted" : "as_traded")}
+            aria-label="Price basis"
+          >
+            <option value="as_traded">As traded</option>
+            <option value="adjusted">Adjusted</option>
+          </select>
+        </label>
+        <label className="tc-ctl" title={COLOR_RULE_LABELS[colorRule]}>
+          <span>Colours</span>
+          <select
+            className="input"
+            value={colorRule}
+            onChange={(e) => {
+              const next = e.target.value === "open" ? "open" : "prev_close";
+              setColorRuleState(next);
+              storeColorRule(next);
+            }}
+            aria-label="Candle colour rule"
+          >
+            <option value="prev_close">vs prev close</option>
+            <option value="open">close vs open</option>
+          </select>
+        </label>
+        <label className="tc-ctl">
+          <span>Volume</span>
+          <input
+            type="checkbox"
+            checked={showVolume}
+            onChange={(e) => setShowVolume(e.target.checked)}
+          />
+        </label>
         <div className="picker tc-picker" role="group" aria-label="Chart indicators">
           {INDICATORS.map((def) => {
             const on = selected.includes(def.key);
@@ -941,6 +1237,15 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
         </div>
       </div>
 
+      {capNotice && (
+        <div className="tc-cap-notice" role="status">
+          {capNotice}
+          <button type="button" aria-label="Dismiss" onClick={() => setCapNotice(null)}>
+            ×
+          </button>
+        </div>
+      )}
+
       {query.isLoading && <div className="tc-skeleton" aria-hidden="true" />}
       {query.error && (
         <div className="tc-error">
@@ -953,19 +1258,27 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           {data.range && !data.range.complete && !chipHidden && (
             <div className="tc-range-chip">
               <span>
-                Archive for {range} starts {fmtDate(data.range.first_shown)}.
+                Archive for {effRange} starts {fmtDate(data.range.first_shown)}.
               </span>
               <button type="button" aria-label="Dismiss" onClick={() => setChipHidden(true)}>
                 ×
               </button>
             </div>
           )}
+          {basis === "adjusted" && data.price_mode?.differs_from_requested && (
+            <div className="tc-range-chip">
+              <span>{data.price_mode.reason}</span>
+            </div>
+          )}
           <TechnicalChart
             data={{ series: data.series, indicators: data.indicators }}
             selected={selected}
             symbol={symbol}
-            onToggleOverlay={toggle}
+            onToggleIndicator={toggle}
             liveCandle={liveCandle}
+            statusByKey={data.disabled}
+            showVolume={showVolume}
+            marketClosed={live ? false : marketOpen === false}
           />
         </>
       )}

@@ -818,7 +818,19 @@ export type IndicatorKey =
   | "hl_52w_high"
   | "hl_52w_low"
   | "bop_14"
-  | "correlation_20";
+  | "correlation_20"
+  | "median_price"
+  | "typical_price"
+  | "price_channel_upper"
+  | "price_channel_middle"
+  | "price_channel_lower"
+  | "correlation_log_20"
+  | "ratio"
+  | "spread"
+  | "compare"
+  | "tech_overall"
+  | "tech_ma_rating"
+  | "tech_osc_rating";
 
 export interface ChartRangeOption {
   value: string;
