@@ -5,6 +5,7 @@ import pytest
 from httpx import AsyncClient
 from httpx._transports.asgi import ASGITransport
 from app.main import app
+from app.config import AI_DISCLOSURE_VERSION
 
 
 class TestAIConsentRoutes:
@@ -99,6 +100,18 @@ class TestAIConsentRoutes:
             headers=self.headers_a,
         )
         assert resp2.status_code == 403
+
+    async def test_consent_version_mismatch_returns_409(self):
+        """PATCH /api/auth/me/ai-consent returns 409 when version mismatches server."""
+        wrong_version = "999.0"
+        assert wrong_version != AI_DISCLOSURE_VERSION
+        resp = await self.client.patch(
+            "/api/auth/me/ai-consent",
+            json={"consent": True, "version": wrong_version},
+            headers=self.headers_a,
+        )
+        assert resp.status_code == 409
+        assert "version" in resp.json()["detail"].lower()
 
     async def test_stream_checks_consent_before_opening(self):
         """POST /api/ai/stream checks consent before opening stream."""

@@ -1673,19 +1673,17 @@ class TestRegression:
 
 
 class TestAILoggingSafety:
-    """Verify no portfolio data is leaked in error messages when AI provider fails."""
+    """Verify no portfolio data is leaked in error messages or logs when AI provider fails."""
 
     @pytest.mark.anyio
-    async def test_ai_failure_error_message_contain_no_portfolio_data(self):
-        """Forcing AI provider failure should not include portfolio data in error messages."""
+    async def test_ai_failure_error_message_contain_no_portfolio_data(self, caplog):
+        """Forcing AI provider failure should not include portfolio data in error messages or logs."""
         import logging
         from app.ai.service import AIService, FailingAIClient, RateLimiter, GroundingContext
-        from app.portfolio.service import PortfolioService
-        from app.reference.service import ReferenceService
-        from app.nepse.registry import get_adapter
-        from app.db.session import SessionLocal
 
-        # Create a service with a failing AI client
+        caplog.set_level(logging.DEBUG)
+
+        # Create a service with a failing AI client that echoes the request in its error
         rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
         client = FailingAIClient("Simulated provider outage")
         service = AIService(client=client, rate_limiter=rate_limiter, daily_limit=1000)
@@ -1722,22 +1720,26 @@ class TestAILoggingSafety:
                 ],
                 "sector_allocation": {"Commercial Banks": 95000.0},
                 "concentration": {"top_holding_pct": 55.0, "top_5_pct": 100.0, "holding_count": 2},
-}
+            }
         }
-        
+
+        # Pass portfolio data through the question to the AI
+        import json
+        question = "Analyze my portfolio with data: " + json.dumps(portfolio_data)
+
         # Get the AI answer (should fail)
         with pytest.raises(RuntimeError) as exc:
             await service.ask(
                 user_id="test_user",
-                question="Analyze my portfolio",
+                question="Analyze my portfolio with data: " + json.dumps(portfolio_data),
                 grounding=GroundingContext(symbols=["NABIL", "NIC"], data_sources=["archive", "live_market"]),
                 privacy_consent=True,
             )
-        assert "Simulated provider outage" in str(exc.value) or "Provider unavailable" in str(exc.value)
 
-        # Check that the exception message doesn't contain sensitive data
-        error_msg = str(exc.value)
-        # Sensitive fields that MUST NOT appear in error messages
+        # Check that the exception message is the expected error
+        assert str(exc.value) == "Simulated provider outage"
+
+        # Check that the exception message doesn't contain sensitive portfolio data
         forbidden = [
             "1234567.89",  # total_value
             "987654.32",   # total_cost
@@ -1750,10 +1752,11 @@ class TestAILoggingSafety:
             "avg_cost",    # sensitive field name
         ]
         for forbidden_item in forbidden:
-            assert forbidden_item not in error_msg, f"Sensitive data '{forbidden_item}' found in error message: {error_msg}"
+            assert forbidden_item not in str(exc.value), f"Sensitive data '{forbidden_item}' found in error message: {str(exc.value)}"
 
-# The error message should contain the error but not the data
-        assert "Simulated provider outage" in str(exc.value) or "Provider unavailable" in str(exc.value)
+        # Check logs for sensitive data leakage
+        for forbidden_item in forbidden:
+            assert forbidden_item not in caplog.text, f"Sensitive data '{forbidden_item}' found in logs: {caplog.text[:500]}"
 
     # Close TestAILoggingSafety class
 
