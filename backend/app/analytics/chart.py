@@ -133,6 +133,8 @@ from app.analytics.indicators import (
     median_price,
     typical_price,
     price_channel,
+    force_index,
+    technical_ratings,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
@@ -774,6 +776,8 @@ async def chart(
         out_indicators["price_channel_middle"] = pc_mid
     if "force_index" in wanted:
         out_indicators["force_index_13"] = force_index(bars, 13)
+    if "technical_ratings" in wanted:
+        out_indicators["technical_ratings"] = technical_ratings(bars)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
