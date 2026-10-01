@@ -476,3 +476,132 @@ def sync_transactions_to_ledger(
         "synced": created,
         "message": f"Created {created} ledger events from transactions" if created else "Already in sync",
     }
+
+
+# --- CSV Import (B2/B3) ---
+
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from fastapi import UploadFile, File
+
+
+class CSVImportRowResponse(BaseModel):
+    row_number: int
+    symbol: str
+    side: str
+    quantity: int
+    price: float
+    trade_date: str
+    fees: Optional[float]
+    note: Optional[str]
+    status: str
+    errors: List[str]
+    warnings: List[str]
+
+
+class CSVImportResponse(BaseModel):
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    duplicate_rows: int
+    insufficient_holdings_rows: int
+    imported_count: int
+    dry_run: bool
+    rows: List[CSVImportRowResponse]
+
+
+@router.get("/{portfolio_id}/import/template", summary="Get CSV import template")
+def get_import_template() -> dict:
+    from app.portfolio.csv_import import get_csv_template
+    return {"template": get_csv_template()}
+
+
+@router.post("/{portfolio_id}/import/preview", summary="Preview CSV import (dry-run)")
+async def preview_csv_import(
+    portfolio_id: str,
+    file: UploadFile = File(...),
+    session: DbSession = None,
+    user: CurrentUser = None,
+) -> CSVImportResponse:
+    """Parse and validate CSV without importing (dry-run)."""
+    content = (await file.read()).decode("utf-8")
+
+    from app.portfolio.csv_import import CSVImporter
+    from app.reference.service import ReferenceService
+    from app.nepse.registry import get_adapter
+
+    importer = CSVImporter(ReferenceService(get_adapter()))
+    try:
+        result = importer.import_csv(session, portfolio_id, user.id, content, dry_run=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return CSVImportResponse(
+        total_rows=result.total_rows,
+        valid_rows=result.valid_rows,
+        invalid_rows=result.invalid_rows,
+        duplicate_rows=result.duplicate_rows,
+        insufficient_holdings_rows=result.insufficient_holdings_rows,
+        imported_count=result.imported_count,
+        dry_run=result.dry_run,
+        rows=[
+            CSVImportRowResponse(
+                row_number=r.row_number,
+                symbol=r.symbol,
+                side=r.side,
+                quantity=r.quantity,
+                price=r.price,
+                trade_date=r.trade_date.isoformat(),
+                fees=r.fees,
+                note=r.note,
+                status=r.status.value,
+                errors=r.errors,
+                warnings=r.warnings,
+            )
+            for r in result.rows
+        ],
+    )
+
+
+@router.post("/{portfolio_id}/import", summary="Import transactions from CSV")
+async def import_csv(
+    portfolio_id: str,
+    file: UploadFile = File(...),
+    session: DbSession = None,
+    user: CurrentUser = None,
+) -> CSVImportResponse:
+    """Parse, validate, and import transactions from CSV."""
+    content = (await file.read()).decode("utf-8")
+
+    from app.portfolio.csv_import import CSVImporter
+    from app.reference.service import ReferenceService
+    from app.nepse.registry import get_adapter
+
+    importer = CSVImporter(ReferenceService(get_adapter()))
+    result = importer.import_csv(session, portfolio_id, user.id, content, dry_run=False)
+
+    return CSVImportResponse(
+        total_rows=result.total_rows,
+        valid_rows=result.valid_rows,
+        invalid_rows=result.invalid_rows,
+        duplicate_rows=result.duplicate_rows,
+        insufficient_holdings_rows=result.insufficient_holdings_rows,
+        imported_count=result.imported_count,
+        dry_run=result.dry_run,
+        rows=[
+            CSVImportRowResponse(
+                row_number=r.row_number,
+                symbol=r.symbol,
+                side=r.side,
+                quantity=r.quantity,
+                price=r.price,
+                trade_date=r.trade_date.isoformat(),
+                fees=r.fees,
+                note=r.note,
+                status=r.status.value,
+                errors=r.errors,
+                warnings=r.warnings,
+            )
+            for r in result.rows
+        ],
+    )
