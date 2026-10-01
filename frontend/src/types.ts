@@ -758,7 +758,24 @@ export type IndicatorKey =
   | "ma_channel_middle"
   | "ma_channel_lower"
   | "smma_20"
-  | "lsma_25";
+  | "lsma_25"
+  | "linreg_curve_100"
+  | "linreg_slope_25"
+  | "linreg_trend_value"
+  | "linreg_trend_direction"
+  | "mcginley_14"
+  | "gmma_s3"
+  | "gmma_s5"
+  | "gmma_s8"
+  | "gmma_s10"
+  | "gmma_s12"
+  | "gmma_s15"
+  | "gmma_l30"
+  | "gmma_l35"
+  | "gmma_l40"
+  | "gmma_l45"
+  | "gmma_l50"
+  | "gmma_l60";
 
 export interface ChartRangeOption {
   value: string;

@@ -85,7 +85,12 @@ export type IndicatorToken =
   | "ma_multi"
   | "ma_channel"
   | "smma"
-  | "lsma";
+  | "lsma"
+  | "linreg_curve"
+  | "linreg_slope"
+  | "linreg_trend"
+  | "mcginley"
+  | "gmma";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -415,6 +420,34 @@ export const INDICATORS: IndicatorDef[] = [
   },
   { key: "smma", token: "smma", label: "SMMA 20", color: "#4db6ac", pane: "overlay", series: ["smma_20"], desc: "Smoothed MA - Wilder's recursion (prev*(N-1) + price)/N; much smoother and slower than the EMA of the same length." },
   { key: "lsma", token: "lsma", label: "LSMA 25", color: "#aed581", pane: "overlay", series: ["lsma_25"], desc: "Least Squares MA - endpoint of the best-fit line over 25 bars; tracks the trend with little lag and flips on reversals." },
+  { key: "linreg_curve", token: "linreg_curve", label: "LinReg Curve 100", color: "#f06292", pane: "overlay", series: ["linreg_curve_100"], desc: "Endpoint of the linear regression fitted over 100 bars - where the best-fit line says price 'should' be now." },
+  { key: "linreg_slope", token: "linreg_slope", label: "LinReg Slope 25", color: "#ffca28", pane: "trend", series: ["linreg_slope_25"], desc: "Slope of the 25-bar regression line, in price units per bar: above zero the fit rises, below it falls." },
+  {
+    key: "linreg_trend",
+    token: "linreg_trend",
+    label: "LinReg Trend 100",
+    color: "#ba68c8",
+    pane: "overlay",
+    series: ["linreg_trend_value"],
+    desc: "Regression line value over 100 bars with a +1/-1/0 direction flag (payload: linreg_trend_direction) - trend up, down or perfectly flat.",
+  },
+  { key: "mcginley", token: "mcginley", label: "McGinley Dynamic 14", color: "#26c6da", pane: "overlay", series: ["mcginley_14"], desc: "Self-adjusting average that accelerates in downtrends and slows in uptrends, hugging price with less whipsaw than a fixed-length MA." },
+  {
+    key: "gmma",
+    token: "gmma",
+    label: "GMMA Ribbon",
+    color: "#78909c",
+    pane: "overlay",
+    series: [
+      "gmma_s3", "gmma_s5", "gmma_s8", "gmma_s10", "gmma_s12", "gmma_s15",
+      "gmma_l30", "gmma_l35", "gmma_l40", "gmma_l45", "gmma_l50", "gmma_l60",
+    ],
+    colors: {
+      gmma_s3: "#ef5350", gmma_s5: "#ec407a", gmma_s8: "#ab47bc", gmma_s10: "#7e57c2", gmma_s12: "#5c6bc0", gmma_s15: "#42a5f5",
+      gmma_l30: "#26a69a", gmma_l35: "#66bb6a", gmma_l40: "#9ccc65", gmma_l45: "#c0ca33", gmma_l50: "#ffa726", gmma_l60: "#ff7043",
+    },
+    desc: "Guppy Multiple MA - six fast EMAs (traders) over six slow EMAs (investors); compressed ribbons mark agreement, expanding ones mark transitions.",
+  },
 ];
 
 /** Default picker mix when nothing is stored. */

@@ -2731,3 +2731,86 @@ def lsma(values: Sequence[Optional[float]], period: int = 25) -> list[Optional[f
     window's newest bar (identical construction to the linear-regression
     curve; kept as a named entry because the doc lists both)."""
     return linreg_endpoint(values, period)
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #13-#17: LinReg curve/slope/trend, McGinley Dynamic, GMMA
+# ---------------------------------------------------------------------------
+
+
+def linreg_curve(values: Sequence[Optional[float]], period: int = 100) -> list[Optional[float]]:
+    """Linear Regression Curve (doc #13): fitted value at the window's end.
+
+    Same construction as LSMA; the doc lists both, the curve with the longer
+    default lookback.
+    """
+    return linreg_endpoint(values, period)
+
+
+def linreg_trend(
+    values: Sequence[Optional[float]], period: int = 100
+) -> dict[str, list[Optional[float]]]:
+    """Linear Regression Trend (doc #15): fitted line value plus direction.
+
+    'value' is the fitted endpoint (a + b x (N-1)); 'direction' is +1.0 when
+    the slope is positive, -1.0 when negative and 0.0 when exactly flat - a
+    genuine zero for a perfectly level window, not a filled gap.
+    """
+    value = linreg_endpoint(values, period)
+    slope = linreg_slope(values, period)
+    direction: list[Optional[float]] = [
+        None if s is None else (1.0 if s > 0 else (-1.0 if s < 0 else 0.0))
+        for s in slope
+    ]
+    return {"value": value, "slope": slope, "direction": direction}
+
+
+def mcginley(values: Sequence[Optional[float]], period: int = 14) -> list[Optional[float]]:
+    """McGinley Dynamic: a price-following average that speeds up in
+    downtrends and slows in uptrends.
+
+    MD_t = MD_{t-1} + (P_t - MD_{t-1}) / (N * (P_t / MD_{t-1})^4), seeded with
+    the first valid close. Runs of consecutive non-None values are tracked
+    independently (a gap reseeds). A zero or negative denominator/price
+    leaves the value None; a constant series keeps MD exactly at that price.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: list[Optional[float]] = [None] * len(values)
+    md_prev: Optional[float] = None
+    for i, v in enumerate(values):
+        if v is None:
+            md_prev = None  # a gap reseeds on the next valid bar
+            continue
+        p = float(v)
+        if md_prev is None:
+            md_prev = p
+            out[i] = p
+            continue
+        ratio = p / md_prev
+        if ratio <= 0 or md_prev <= 0:
+            out[i] = None
+            continue
+        out[i] = md_prev + (p - md_prev) / (period * ratio**4)
+        md_prev = out[i]
+    return out
+
+
+def gmma(
+    closes: Sequence[Optional[float]],
+    short: Sequence[int] = (3, 5, 8, 10, 12, 15),
+    long: Sequence[int] = (30, 35, 40, 45, 50, 60),
+) -> dict[str, list[Optional[float]]]:
+    """Guppy Multiple Moving Average: two EMA ribbons.
+
+    Short group EMA(3,5,8,10,12,15) tracks traders; long group
+    EMA(30,35,40,45,50,60) tracks investors. Ribbon compression marks
+    agreement (trend), expansion marks disagreement (transition). Keys are
+    'gmma_s<N>' and 'gmma_l<N>'.
+    """
+    out: dict[str, list[Optional[float]]] = {}
+    for p in short:
+        out[f"gmma_s{p}"] = ema_on_valid(closes, p)
+    for p in long:
+        out[f"gmma_l{p}"] = ema_on_valid(closes, p)
+    return out

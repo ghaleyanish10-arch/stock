@@ -30,8 +30,13 @@ from app.analytics.indicators import (
     ohlc4_series,
     percentrank,
     rma,
+    linreg_curve,
+    linreg_trend,
     lsma,
+    mcginley,
+    gmma,
     smma,
+    ema_on_valid,
 )
 
 
@@ -300,3 +305,69 @@ class TestSmmaLsma:
         vals = [1.0, 2.0, 3.0, 4.0, 6.0]
         assert lsma(vals, 5)[4] == pytest.approx(5.6)
         assert lsma(vals, 5) == linreg_endpoint(vals, 5)
+
+
+# ---------------------------------------------------------------------------
+# Doc #13 LinReg curve; #15 LinReg trend; #16 McGinley; #17 GMMA
+# ---------------------------------------------------------------------------
+
+
+class TestLinregCurveTrend:
+    def test_curve_matches_endpoint(self):
+        vals = [1.0, 2.0, 3.0, 4.0, 6.0]
+        assert linreg_curve(vals, 5) == linreg_endpoint(vals, 5)
+
+    def test_trend_direction_signs(self):
+        up = linreg_trend([float(x) for x in range(1, 11)], 5)
+        assert up["direction"][9] == 1.0
+        down = linreg_trend([float(x) for x in range(10, 0, -1)], 5)
+        assert down["direction"][9] == -1.0
+        flat = linreg_trend([4.0] * 8, 5)
+        assert flat["direction"][7] == 0.0  # genuine zero: perfectly level
+
+    def test_trend_warmup(self):
+        out = linreg_trend([1.0, 2.0, 3.0], 5)
+        assert all(v is None for v in out["value"])
+        assert all(v is None for v in out["direction"])
+
+
+class TestMcginley:
+    def test_constant_series_is_exact(self):
+        out = mcginley([7.0] * 5, 14)
+        assert out == [7.0, 7.0, 7.0, 7.0, 7.0]
+
+    def test_hand_value_after_one_step(self):
+        # MD_2 = 10 + (11 - 10) / (14 * (11/10)^4) = 10 + 1/20.4974 = 10.0488.
+        out = mcginley([10.0, 11.0], 14)
+        assert out[0] == 10.0
+        assert out[1] == pytest.approx(10.0488, abs=1e-4)
+
+    def test_gap_reseeds(self):
+        out = mcginley([10.0, 11.0, None, 12.0], 14)
+        assert out[2] is None
+        assert out[3] == 12.0  # reseeds with the first valid close after the gap
+
+    def test_insufficient_input(self):
+        assert mcginley([], 14) == []
+        assert mcginley([None, None], 14) == [None, None]
+
+
+class TestGmma:
+    def test_keys_and_hand_value(self):
+        closes = [float(x) for x in range(1, 31)]
+        out = gmma(closes)
+        assert set(out) == {f"gmma_s{p}" for p in (3, 5, 8, 10, 12, 15)} | {
+            f"gmma_l{p}" for p in (30, 35, 40, 45, 50, 60)
+        }
+        # EMA(3) lag on a unit ramp is (1-a)/a = 1, so the value trails the
+        # last close by 1: 30 - 1 = 29.
+        assert out["gmma_s3"][29] == pytest.approx(29.0, abs=0.01)
+        # EMA(30) warms up exactly on the last of 30 closes (SMA seed 15.5);
+        # the 60-period ribbon never does.
+        assert out["gmma_l30"][28] is None
+        assert out["gmma_l30"][29] == pytest.approx(15.5)
+        assert all(v is None for v in out["gmma_l60"])
+
+    def test_matches_ema_on_valid(self):
+        closes = [1.0, 2.0, 3.0, None, 5.0, 6.0]
+        assert gmma(closes, short=(3,))["gmma_s3"] == ema_on_valid(closes, 3)

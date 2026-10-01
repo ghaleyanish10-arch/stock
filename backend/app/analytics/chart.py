@@ -42,6 +42,7 @@ from app.analytics.indicators import (
     cumulative_volume_delta,
     dema,
     demark_pivots,
+    gmma,
     donchian,
     ease_of_movement,
     ema,
@@ -64,6 +65,10 @@ from app.analytics.indicators import (
     ma_ema_cross,
     ma_hamming,
     ma_multiple,
+    linreg_curve,
+    linreg_slope,
+    linreg_trend,
+    mcginley,
     money_flow_index,
     smma,
     momentum,
@@ -498,6 +503,19 @@ async def chart(
         out_indicators["smma_20"] = smma(w_closes, 20)
     if "lsma" in wanted:
         out_indicators["lsma_25"] = lsma(w_closes, 25)
+    if "linreg_curve" in wanted:
+        out_indicators["linreg_curve_100"] = linreg_curve(w_closes, 100)
+    if "linreg_slope" in wanted:
+        out_indicators["linreg_slope_25"] = linreg_slope(w_closes, 25)
+    if "linreg_trend" in wanted:
+        lt = linreg_trend(w_closes, 100)
+        out_indicators["linreg_trend_value"] = lt["value"]
+        out_indicators["linreg_trend_direction"] = lt["direction"]
+    if "mcginley" in wanted:
+        out_indicators["mcginley_14"] = mcginley(w_closes, 14)
+    if "gmma" in wanted:
+        for key, series_ in gmma(w_closes).items():
+            out_indicators[key] = series_
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
