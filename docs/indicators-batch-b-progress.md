@@ -56,14 +56,14 @@
 | 42 | Volatility Zero Trend | Volatility | ✅ Done | 99d6b06 | 3 | |
 | 43 | Volatility OHLC | Volatility | ✅ Done | 99d6b06 | 3 | GK/YZ **UNVERIFIED** |
 | 44 | Volatility Index | Volatility | 🚫 Disabled | 99d6b06 | - | No options market |
-| 45 | 52 Week High/Low | Market | ✅ Done | **in progress** | 3 | |
-| 46 | Advance/Decline | Market | ✅ Done | **in progress** | 2 | `/api/analytics/breadth` |
-| 47 | Balance of Power | Momentum | ✅ Done | **in progress** | 3 | |
-| 48 | Correlation | Comparison | ✅ Done | **in progress** | 4 | |
-| 49 | Correlation Log | Comparison | ⏳ Not Started | - | - | |
-| 50 | Ratio | Comparison | ⏳ Not Started | - | - | |
-| 51 | Spread | Comparison | ⏳ Not Started | - | - | |
-| 52 | Compare | Comparison | ⏳ Not Started | - | - | |
+| 45 | 52 Week High/Low | Market | ✅ Done | a2374b2 | 3 | |
+| 46 | Advance/Decline | Market | ✅ Done | a2374b2 | 2 | `/api/analytics/breadth` |
+| 47 | Balance of Power | Momentum | ✅ Done | a2374b2 | 3 | |
+| 48 | Correlation | Comparison | ✅ Done | a2374b2 | 4 | |
+| 49 | Correlation Log | Comparison | ✅ Done | **current** | 4 | |
+| 50 | Ratio | Comparison | ✅ Done | **current** | 4 | |
+| 51 | Spread | Comparison | ✅ Done | **current** | 2 | |
+| 52 | Compare | Comparison | ✅ Done | **current** | 4 | |
 | 53 | Median Price | Price | ⏳ Not Started | - | - | |
 | 54 | Typical Price | Price | ⏳ Not Started | - | - | |
 | 55 | Price Channel | Price | ⏳ Not Started | - | - | |

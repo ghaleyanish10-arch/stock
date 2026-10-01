@@ -3779,3 +3779,111 @@ def correlation(
         sxy = sum((x - ma) * (y - mb) for x, y in zip(xa, xb))
         out[i] = sxy / math.sqrt(sxx * syy)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #49-#52: Correlation-Log, Ratio, Spread, Compare
+# ---------------------------------------------------------------------------
+
+
+def correlation_log(
+    closes_a: Sequence[Optional[float]],
+    closes_b: Sequence[Optional[float]],
+    period: int = 20,
+) -> list[Optional[float]]:
+    """Correlation on log returns (doc #49): Pearson r of ln(C_t/C_{t-1}).
+
+    Log returns are computed after the two series are aligned by date
+    (inner join). Fewer than `period` common sessions -> pending/None.
+    Zero variance -> not_applicable (None).
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    # Compute log returns first
+    rets_a: list[Optional[float]] = [None] * len(closes_a)
+    rets_b: list[Optional[float]] = [None] * len(closes_b)
+    for i in range(1, len(closes_a)):
+        if closes_a[i] is not None and closes_a[i - 1] is not None and closes_a[i - 1] > 0:
+            rets_a[i] = math.log(closes_a[i] / closes_a[i - 1])
+    for i in range(1, len(closes_b)):
+        if closes_b[i] is not None and closes_b[i - 1] is not None and closes_b[i - 1] > 0:
+            rets_b[i] = math.log(closes_b[i] / closes_b[i - 1])
+    # Now compute rolling correlation on the return series
+    # The correlation function needs at least `period` valid values
+    return correlation(rets_a, rets_b, period)
+
+
+def ratio(
+    closes_a: Sequence[Optional[float]],
+    closes_b: Sequence[Optional[float]],
+) -> list[Optional[float]]:
+    """Ratio (doc #50): C_A / C_B on aligned sessions.
+
+    Both series must be aligned by the caller (same index = same session).
+    C_B = 0 -> not_applicable (None).
+    Returns None for any index where either value is missing or C_B == 0.
+    """
+    n = min(len(closes_a), len(closes_b))
+    out: list[Optional[float]] = [None] * n
+    for i in range(n):
+        a = closes_a[i]
+        b = closes_b[i]
+        if a is None or b is None or b == 0:
+            continue
+        out[i] = float(a) / float(b)
+    return out
+
+
+def spread(
+    closes_a: Sequence[Optional[float]],
+    closes_b: Sequence[Optional[float]],
+) -> list[Optional[float]]:
+    """Spread (doc #51): C_A - C_B on aligned sessions."""
+    n = min(len(closes_a), len(closes_b))
+    out: list[Optional[float]] = [None] * n
+    for i in range(n):
+        a = closes_a[i]
+        b = closes_b[i]
+        if a is None or b is None:
+            continue
+        out[i] = float(a) - float(b)
+    return out
+
+
+def compare(
+    closes_a: Sequence[Optional[float]],
+    closes_b: Sequence[Optional[float]],
+    mode: str = "rebase",
+) -> list[Optional[float]]:
+    """Compare (doc #52): rebases series B to series A's first common value.
+
+    mode="rebase": 100 * C_B / C_B0 where B0 is B's value at first common index.
+    mode="percent": (C_B / C_B0 - 1) * 100.
+    Returns None where either series is missing.
+    """
+    n = min(len(closes_a), len(closes_b))
+    out: list[Optional[float]] = [None] * n
+    # Find first index where both have values
+    base_idx = -1
+    for i in range(n):
+        if closes_a[i] is not None and closes_b[i] is not None:
+            base_idx = i
+            break
+    if base_idx == -1:
+        return out
+    base_b = closes_b[base_idx]
+    if base_b is None or base_b == 0:
+        return out
+    if mode == "rebase":
+        for i in range(base_idx, n):
+            if closes_a[i] is None or closes_b[i] is None:
+                continue
+            out[i] = 100.0 * float(closes_b[i]) / float(base_b)
+    elif mode == "percent":
+        for i in range(base_idx, n):
+            if closes_a[i] is None or closes_b[i] is None:
+                continue
+            out[i] = (float(closes_b[i]) / float(base_b) - 1.0) * 100.0
+    else:
+        raise ValueError("mode must be 'rebase' or 'percent'")
+    return out

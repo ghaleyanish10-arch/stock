@@ -49,6 +49,7 @@ from app.analytics.indicators import (
     cumulative_volume_delta,
     balance_of_power,
     correlation,
+    correlation_log,
     dema,
     demark_pivots,
     gmma,
@@ -125,6 +126,10 @@ from app.analytics.indicators import (
     rvi,
     Bar,
     woodie_pivots,
+    correlation_log,
+    ratio,
+    spread,
+    compare,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
@@ -672,6 +677,87 @@ async def chart(
             for pos, i in enumerate(corr_pairs_idx):
                 corr_aligned[i] = corr_vals[pos]
             out_indicators["correlation_20"] = corr_aligned
+
+    # -- Batch B doc #49-#52 ----------------------------------------------------
+    if "correlation_log" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["correlation_log"] = (
+                "needs a comparison symbol: pass compare=<SYMBOL> so the two "
+                "close series can be aligned by date."
+            )
+        else:
+            corr_pairs_idx = [
+                i
+                for i, d in enumerate(dates_w)
+                if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
+            ]
+            corr_a = [w_closes[i] for i in corr_pairs_idx]  # type: ignore[misc]
+            corr_b = [compare_closes_by_date[dates_w[i]] for i in corr_pairs_idx]
+            corr_vals = correlation_log(corr_a, corr_b, 20)
+            corr_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for pos, i in enumerate(corr_pairs_idx):
+                corr_aligned[i] = corr_vals[pos]
+            out_indicators["correlation_log_20"] = corr_aligned
+
+    if "ratio" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["ratio"] = (
+                "needs a comparison symbol: pass compare=<SYMBOL> so the two "
+                "close series can be aligned by date."
+            )
+        else:
+            ratio_pairs_idx = [
+                i
+                for i, d in enumerate(dates_w)
+                if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
+            ]
+            ratio_a = [w_closes[i] for i in ratio_pairs_idx]  # type: ignore[misc]
+            ratio_b = [compare_closes_by_date[dates_w[i]] for i in ratio_pairs_idx]
+            ratio_vals = ratio(ratio_a, ratio_b)
+            ratio_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for pos, i in enumerate(ratio_pairs_idx):
+                ratio_aligned[i] = ratio_vals[pos]
+            out_indicators["ratio"] = ratio_aligned
+
+    if "spread" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["spread"] = (
+                "needs a comparison symbol: pass compare=<SYMBOL> so the two "
+                "close series can be aligned by date."
+            )
+        else:
+            spread_pairs_idx = [
+                i
+                for i, d in enumerate(dates_w)
+                if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
+            ]
+            spread_a = [w_closes[i] for i in spread_pairs_idx]  # type: ignore[misc]
+            spread_b = [compare_closes_by_date[dates_w[i]] for i in spread_pairs_idx]
+            spread_vals = spread(spread_a, spread_b)
+            spread_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for pos, i in enumerate(spread_pairs_idx):
+                spread_aligned[i] = spread_vals[pos]
+            out_indicators["spread"] = spread_aligned
+
+    if "compare" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["compare"] = (
+                "needs a comparison symbol: pass compare=<SYMBOL> so the two "
+                "close series can be aligned by date."
+            )
+        else:
+            compare_pairs_idx = [
+                i
+                for i, d in enumerate(dates_w)
+                if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
+            ]
+            compare_a = [w_closes[i] for i in compare_pairs_idx]  # type: ignore[misc]
+            compare_b = [compare_closes_by_date[dates_w[i]] for i in compare_pairs_idx]
+            compare_vals = compare(compare_a, compare_b, "rebase")
+            compare_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for pos, i in enumerate(compare_pairs_idx):
+                compare_aligned[i] = compare_vals[pos]
+            out_indicators["compare"] = compare_aligned
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

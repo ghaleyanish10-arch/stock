@@ -69,7 +69,11 @@ from app.analytics.indicators import (
     advance_decline,
     balance_of_power,
     correlation,
+    correlation_log,
     high_low_52w,
+    ratio,
+    spread,
+    compare,
 )
 
 
@@ -1026,3 +1030,103 @@ class TestBreadthRoute:
             session.close()
             Base.metadata.drop_all(bind=engine)
             engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Doc #49 Correlation-Log; #50 Ratio; #51 Spread; #52 Compare
+# ---------------------------------------------------------------------------
+
+
+class TestCorrelationLog:
+    def test_perfect_positive_and_negative(self):
+        # Need 6 prices to get 5 log returns for period=5
+        x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        # y = 2x -> log returns of y equal log returns of x
+        y = [2.0, 4.0, 6.0, 8.0, 10.0, 12.0]
+        assert correlation_log(x, y, 5)[5] == pytest.approx(1.0)
+        # For negative correlation, use inverse relationship: y = k/x
+        # x = [1,2,3,4,5,6], y = [12,6,4,3,2.4,2] (approx 12/x)
+        y = [12.0, 6.0, 4.0, 3.0, 2.4, 2.0]
+        assert correlation_log(x, y, 5)[5] == pytest.approx(-1.0, abs=1e-3)
+
+    def test_hand_partial(self):
+        # Correlation of log returns of [1,2,3,4,5,6] and [1,2,3,4,4,4]
+        # Log returns of x: ln(2/1), ln(3/2), ln(4/3), ln(5/4), ln(6/5)
+        # Log returns of y: ln(2/1), ln(3/2), ln(4/3), ln(4/4), ln(4/4)
+        # The correlation of these log return series is ~0.9596
+        x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        y = [1.0, 2.0, 3.0, 4.0, 4.0, 4.0]
+        r = correlation_log(x, y, 5)[5]
+        assert r == pytest.approx(0.9596, abs=1e-3)
+
+    def test_flat_series_is_none(self):
+        out = correlation_log([1.0, 2.0, 3.0, 4.0], [2.0, 2.0, 2.0, 2.0], 3)
+        assert out[3] is None
+
+    def test_warmup(self):
+        out = correlation_log([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], 5)
+        assert out == [None, None, None]
+
+
+class TestRatio:
+    def test_perfect_and_invalid(self):
+        x = [1.0, 2.0, 3.0, 4.0, 5.0]
+        # C_A / C_B = 5/10 = 0.5
+        assert ratio(x, [2.0, 4.0, 6.0, 8.0, 10.0])[-1] == pytest.approx(0.5)
+        assert ratio(x, [0.0, 0.0, 0.0, 0.0, 0.0])[-1] is None
+
+    def test_warmup(self):
+        # Single value -> no valid ratio (need at least one pair)
+        assert ratio([1.0], [2.0]) == [0.5]
+
+
+class TestSpread:
+    def test_basic_and_invalid(self):
+        x = [1.0, 2.0, 3.0, 4.0, 5.0]
+        assert spread(x, [1.0, 2.0, 3.0, 4.0, 5.0])[-1] == 0.0
+        assert spread(x, [10.0, 10.0, 10.0, 10.0, 10.0])[-1] == pytest.approx(-5.0)
+
+    def test_missing_handling(self):
+        out = spread([1.0, None, 3.0], [1.0, 2.0, 3.0])
+        assert out[0] == 0.0
+        assert out[1] is None
+        assert out[2] == 0.0
+
+
+class TestCompare:
+    def test_rebase_to_100(self):
+        # A = [10, 11, 12], B = [20, 22, 24] -> rebased B starts at 100
+        a = [10.0, 11.0, 12.0]
+        b = [20.0, 22.0, 24.0]
+        out = compare(a, b, "rebase")
+        assert out[0] == 100.0
+        assert out[1] == pytest.approx(110.0)
+        assert out[2] == pytest.approx(120.0)
+
+    def test_percent_mode(self):
+        a = [10.0, 11.0, 12.0]
+        b = [20.0, 22.0, 24.0]
+        out = compare(a, b, "percent")
+        assert out[0] == 0.0
+        assert out[1] == pytest.approx(10.0)
+        assert out[2] == pytest.approx(20.0)
+
+    def test_missing_handling(self):
+        a = [10.0, None, 12.0]
+        b = [20.0, 22.0, 24.0]
+        out = compare(a, b, "rebase")
+        assert out[0] == 100.0
+        assert out[1] is None
+        assert out[2] == pytest.approx(120.0)
+
+    def test_no_common_start_returns_none(self):
+        a = [None, None, 10.0]
+        b = [20.0, 22.0, 24.0]
+        out = compare(a, b, "rebase")
+        assert out[0] is None
+        assert out[1] is None
+        assert out[2] == 100.0
+
+    def test_invalid_mode(self):
+        with pytest.raises(ValueError):
+            compare([1.0], [2.0], "invalid")
