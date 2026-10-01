@@ -95,7 +95,13 @@ export type IndicatorToken =
   | "trend_strength"
   | "zigzag"
   | "alligator"
-  | "fractals";
+  | "fractals"
+  | "accel_osc"
+  | "cmo"
+  | "connors_rsi"
+  | "coppock"
+  | "fisher"
+  | "kst";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -483,6 +489,12 @@ export const INDICATORS: IndicatorDef[] = [
     series: ["fractal_high", "fractal_low"],
     desc: "Swing highs/lows strictly above/below the two bars on each side, shown only once both future bars exist (confirmed flag in the payload: fractal_confirmed).",
   },
+  { key: "accel_osc", token: "accel_osc", label: "Accelerator Osc", color: "#8bc34a", pane: "osc", series: ["accel_osc"], desc: "Awesome Oscillator minus its own 5-bar average - momentum's acceleration. Rising above zero confirms bull momentum, falling below confirms bear." },
+  { key: "cmo", token: "cmo", label: "CMO 14", color: "#e91e63", pane: "osc", series: ["cmo_14"], desc: "Chande Momentum Oscillator: raw gains-vs-losses sums over 14 bars, scaled -100..+100. Above +50 strong bull, below -50 strong bear." },
+  { key: "connors_rsi", token: "connors_rsi", label: "Connors RSI", color: "#00bcd4", pane: "osc", series: ["connors_rsi"], desc: "Mean of RSI(3), RSI of the up/down streak and the 100-bar percent-rank of the 1-day return - a short-term mean-reversion gauge tuned for one-day extremes." },
+  { key: "coppock", token: "coppock", label: "Coppock Curve", color: "#ffb300", pane: "osc", series: ["coppock"], desc: "WMA(ROC(14) + ROC(11), 10) - a long-horizon momentum curve; its classic signal is the first upturn after dipping below zero." },
+  { key: "fisher", token: "fisher", label: "Fisher Transform 9", color: "#7e57c2", pane: "osc", series: ["fisher_9"], desc: "Maps the close's position in its 9-bar range through a log transform, sharpening turning points; crossings of its smoothed value time reversals." },
+  { key: "kst", token: "kst", label: "KST", color: "#26a69a", pane: "osc", series: ["kst"], desc: "Know Sure Thing: weighted sum of four smoothed ROCs (10/15/20/30) - blends short and long momentum into one cycle gauge; zero-line crosses mark regime shifts." },
 ];
 
 /** Default picker mix when nothing is stored. */

@@ -30,7 +30,11 @@ from app.analytics.indicators import (
     asi,
     atr,
     average_price,
+    accelerator_oscillator,
     ama,
+    cmo,
+    connors_rsi,
+    coppock,
     awesome_oscillator,
     bollinger,
     bollinger_on_valid,
@@ -60,6 +64,8 @@ from app.analytics.indicators import (
     macd,
     macd_on_valid,
     alligator,
+    fisher,
+    kst,
     fractals,
     majority_rule,
     lsma,
@@ -541,6 +547,18 @@ async def chart(
         out_indicators["fractal_high"] = fr["high"]
         out_indicators["fractal_low"] = fr["low"]
         out_indicators["fractal_confirmed"] = fr["confirmed"]
+    if "accel_osc" in wanted:
+        out_indicators["accel_osc"] = accelerator_oscillator(bars)
+    if "cmo" in wanted:
+        out_indicators["cmo_14"] = cmo(w_closes, 14)
+    if "connors_rsi" in wanted:
+        out_indicators["connors_rsi"] = connors_rsi(w_closes)
+    if "coppock" in wanted:
+        out_indicators["coppock"] = coppock(w_closes)
+    if "fisher" in wanted:
+        out_indicators["fisher_9"] = fisher(w_closes, 9)
+    if "kst" in wanted:
+        out_indicators["kst"] = kst(w_closes)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

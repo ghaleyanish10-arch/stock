@@ -38,11 +38,19 @@ from app.analytics.indicators import (
     smma,
     ema_on_valid,
     alligator,
+    accelerator_oscillator,
+    cmo,
+    connors_rsi,
+    coppock,
+    fisher,
     fractals,
+    kst,
     majority_rule,
     trend_strength,
     zigzag,
     tsi,
+    wma,
+    roc as roc_fn,
 )
 
 
@@ -497,3 +505,94 @@ class TestFractals:
         out = fractals(bars)
         assert out["high"][2] == 5.0
         assert out["low"][2] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Doc #23 Accelerator; #24 CMO; #25 Connors RSI; #26 Coppock; #27 Fisher;
+# #28 KST
+# ---------------------------------------------------------------------------
+
+
+class TestAcceleratorOscillator:
+    def test_flat_market_is_genuine_zero(self):
+        bars = [flat_bar(10.0) for _ in range(40)]
+        out = accelerator_oscillator(bars)
+        # AO needs 34 medians (first at idx33), AC needs 5 AO values: first at idx37.
+        assert out[36] is None
+        assert out[37] == 0.0
+
+
+class TestCmo:
+    def test_pure_trends_hit_bounds(self):
+        assert cmo([1, 2, 3, 4, 5], 4)[4] == pytest.approx(100.0)
+        assert cmo([5, 4, 3, 2, 1], 4)[4] == pytest.approx(-100.0)
+
+    def test_hand_mixed_window(self):
+        # changes [+1, -0.5, +1.5]: gains 2.5, losses 0.5 -> 100*2/3.
+        assert cmo([1.0, 2.0, 1.5, 3.0], 3)[3] == pytest.approx(66.6667, abs=1e-3)
+
+    def test_flat_is_none_not_zero(self):
+        assert all(v is None for v in cmo([5.0] * 5, 4))
+
+
+class TestConnorsRsi:
+    def test_hand_value_on_ramp(self):
+        # All-up closes: RSI(3) = 100, RSI(streak, 2) = 100, and the 1-day
+        # return is the SMALLEST of its last 5 -> percentrank 0 -> 200/3.
+        out = connors_rsi([float(x) for x in range(1, 11)], 3, 2, 5)
+        assert out[:5] == [None] * 5
+        assert out[5] == pytest.approx(200.0 / 3.0)
+
+    def test_needs_all_legs(self):
+        out = connors_rsi([1.0, 2.0, 3.0], 3, 2, 5)
+        assert all(v is None for v in out)
+
+
+class TestCoppock:
+    def test_flat_series_is_genuine_zero(self):
+        out = coppock([7.0] * 30)
+        assert out[22] is None
+        assert out[23] == 0.0  # max(14, 11) + 10 - 1 = 23
+
+    def test_matches_manual_composition(self):
+        closes = [float(x) for x in range(1, 25)]
+        combined = [
+            None if (a is None or b is None) else a + b
+            for a, b in zip(roc_fn(closes, 1), roc_fn(closes, 2))
+        ]
+        assert coppock(closes, 1, 2, 3) == wma(combined, 3)
+
+
+class TestFisher:
+    def test_hand_values(self):
+        closes = [3.0, 3.5, 2.5, 3.2, 2.8]
+        out = fisher(closes, 3)
+        # idx2: close == window low -> x = -1 -> divergent -> None.
+        assert out[2] is None
+        # idx3: pos = 0.7, x = 0.4 -> 0.5*ln(1.4/0.6) = 0.4236.
+        assert out[3] == pytest.approx(0.4236, abs=1e-3)
+        # idx4: pos = 0.3/0.7, x = -0.142857 -> raw = 0.5*ln(0.75) = -0.1438;
+        # smoothed: 0.5*(-0.1438) + 0.5*(0.4236) = 0.1399.
+        assert out[4] == pytest.approx(0.1399, abs=1e-3)
+
+    def test_flat_window_is_none(self):
+        assert all(v is None for v in fisher([4.0] * 6, 3))
+
+
+class TestKst:
+    def test_hand_values_small_params(self):
+        closes = [1.0, 2.0, 3.0, 4.0, 5.0]
+        # roc=(1,1,1,1), sma=1 each: KST = (1+2+3+4) * ROC1 (percent form).
+        out = kst(closes, (1, 1, 1, 1), (1, 1, 1, 1), (1.0, 2.0, 3.0, 4.0))
+        assert out[1] == pytest.approx(1000.0)   # ROC1 = 100%
+        assert out[4] == pytest.approx(250.0)    # ROC1 = 25%
+
+    def test_longer_roc_hand_value(self):
+        closes = [1.0, 2.0, 3.0, 4.0, 5.0]
+        out = kst(closes, (2, 2, 2, 2), (1, 1, 1, 1), (1.0, 2.0, 3.0, 4.0))
+        # ROC(2) at idx4 = (5/3 - 1) * 100 = 66.667% -> 10 * 66.667.
+        assert out[4] == pytest.approx(666.6667, abs=1e-2)
+
+    def test_warmup(self):
+        out = kst([1.0, 2.0, 3.0], (10, 15, 20, 30), (10, 10, 10, 15), (1, 2, 3, 4))
+        assert all(v is None for v in out)

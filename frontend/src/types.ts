@@ -786,7 +786,13 @@ export type IndicatorKey =
   | "alligator_lips"
   | "fractal_high"
   | "fractal_low"
-  | "fractal_confirmed";
+  | "fractal_confirmed"
+  | "accel_osc"
+  | "cmo_14"
+  | "connors_rsi"
+  | "coppock"
+  | "fisher_9"
+  | "kst";
 
 export interface ChartRangeOption {
   value: string;

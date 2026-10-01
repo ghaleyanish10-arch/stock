@@ -3010,3 +3010,195 @@ def fractals(bars: Sequence[Bar], wings: int = 2) -> dict[str, list[Optional[flo
                 low[t] = float(l)
                 confirmed[t] = True
     return {"high": high, "low": low, "confirmed": confirmed}
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #23-#28: Accelerator Oscillator, CMO, Connors RSI, Coppock,
+# Fisher Transform, KST
+# ---------------------------------------------------------------------------
+
+
+def accelerator_oscillator(bars: Sequence[Bar]) -> list[Optional[float]]:
+    """Accelerator Oscillator (doc #23): AC = AO - SMA(AO, 5).
+
+    AO = SMA(median, 5) - SMA(median, 34) (the existing Awesome Oscillator);
+    AC is AO's own 5-bar SMA subtracted from it - momentum's acceleration.
+    A flat market has AO = 0 and AC = 0.0, a genuine zero. None until both
+    smoothings have warmed (34-bar median window plus 5 on AO).
+    """
+    ao = awesome_oscillator(bars)
+    return [
+        None if (v is None or m is None) else v - m
+        for v, m in zip(ao, sma(ao, 5))
+    ]
+
+
+def cmo(closes: Sequence[Optional[float]], period: int = 14) -> list[Optional[float]]:
+    """Chande Momentum Oscillator (doc #24):
+    100 * (sum gains - sum losses) / (sum gains + sum losses).
+
+    Unlike RSI's smoothed ratios, CMO uses raw sums over the window, so it
+    swings the full -100..+100 range. A window with no movement at all makes
+    the denominator 0 - CMO is undefined there, None not 0.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    changes: list[Optional[float]] = [None] * len(closes)
+    for i in range(1, len(closes)):
+        prev, cur = closes[i - 1], closes[i]
+        if prev is None or cur is None:
+            continue
+        changes[i] = float(cur) - float(prev)
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(period, len(closes)):
+        window = changes[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        gains = sum(v for v in window if v > 0)  # type: ignore[type-var]
+        losses = sum(-v for v in window if v < 0)  # type: ignore[type-var]
+        if gains + losses == 0:
+            continue
+        out[i] = 100.0 * (gains - losses) / (gains + losses)
+    return out
+
+
+def _close_streaks(closes: Sequence[Optional[float]]) -> list[Optional[float]]:
+    """Consecutive up/down close streak: +k after k rising closes, -k after k
+    falling ones, 0.0 on an unchanged close; None until the first change."""
+    out: list[Optional[float]] = [None] * len(closes)
+    streak = 0.0
+    for i in range(1, len(closes)):
+        prev, cur = closes[i - 1], closes[i]
+        if prev is None or cur is None:
+            streak = 0.0
+            continue
+        d = float(cur) - float(prev)
+        if d > 0:
+            streak = streak + 1.0 if streak > 0 else 1.0
+        elif d < 0:
+            streak = streak - 1.0 if streak < 0 else -1.0
+        else:
+            streak = 0.0
+        out[i] = streak
+    return out
+
+
+def connors_rsi(
+    closes: Sequence[Optional[float]],
+    rsi_period: int = 3,
+    streak_period: int = 2,
+    roc_period: int = 100,
+) -> list[Optional[float]]:
+    """Connors RSI (doc #25): the mean of three legs.
+
+    CRSI = (RSI(Close, 3) + RSI(streak, 2) + PercentRank(ROC(1), 100)) / 3.
+    The streak leg is RSI of the consecutive up/down count, so one-day
+    extremes dominate by design - this is a short-term mean-reversion gauge.
+    None until all three legs are computable (the percent-rank leg needs
+    `roc_period` valid one-day returns).
+    """
+    if rsi_period <= 0 or streak_period <= 0 or roc_period <= 1:
+        raise ValueError("periods must be positive (roc_period > 1)")
+    leg_rsi = rsi(closes, rsi_period)
+    streaks = _close_streaks(closes)
+    leg_streak = rsi(streaks, streak_period)
+    rets = roc(closes, 1)
+    leg_rank = percentrank(rets, roc_period)
+    out: list[Optional[float]] = [None] * len(closes)
+    for i in range(len(closes)):
+        a, b, c = leg_rsi[i], leg_streak[i], leg_rank[i]
+        if None in (a, b, c):
+            continue
+        out[i] = (float(a) + float(b) + float(c)) / 3.0  # type: ignore[arg-type]
+    return out
+
+
+def coppock(
+    closes: Sequence[Optional[float]],
+    roc1_period: int = 14,
+    roc2_period: int = 11,
+    wma_period: int = 10,
+) -> list[Optional[float]]:
+    """Coppock Curve (doc #26): WMA(ROC(14) + ROC(11), 10).
+
+    A long-horizon momentum oscillator; its classic buy signal is the first
+    upturn after a dip below zero. A flat series has both ROCs 0 and the
+    curve exactly 0.0. None until the WMA window fills.
+    """
+    if roc1_period <= 0 or roc2_period <= 0 or wma_period <= 0:
+        raise ValueError("periods must be positive")
+    r1 = roc(closes, roc1_period)
+    r2 = roc(closes, roc2_period)
+    combined: list[Optional[float]] = [
+        None if (a is None or b is None) else a + b for a, b in zip(r1, r2)
+    ]
+    return wma(combined, wma_period)
+
+
+def fisher(closes: Sequence[Optional[float]], period: int = 9) -> list[Optional[float]]:
+    """Fisher Transform (doc #27): maps the close's position in its N-bar
+    range through 0.5 * ln((1 + x) / (1 - x)) with x = 2 * position - 1,
+    then halves-smooths toward the previous value.
+
+    When the close sits exactly on the window's high or low, x = +-1 and the
+    logarithm diverges - that bar is None (a boundary close is a genuine
+    edge case, not a computable value). The smoothing reseeds after such a
+    gap or after a window gap. Windows where high == low are undefined.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: list[Optional[float]] = [None] * len(closes)
+    prev_f: Optional[float] = None
+    for i in range(period - 1, len(closes)):
+        window = closes[i - period + 1 : i + 1]
+        if any(v is None for v in window):
+            prev_f = None
+            continue
+        wf = [float(v) for v in window]  # type: ignore[arg-type]
+        hi, lo, cur = max(wf), min(wf), wf[-1]
+        if hi == lo:
+            prev_f = None
+            continue
+        position = (cur - lo) / (hi - lo)
+        if position <= 0.0 or position >= 1.0:
+            out[i] = None
+            prev_f = None
+            continue
+        x = 2.0 * position - 1.0
+        raw = 0.5 * math.log((1.0 + x) / (1.0 - x))
+        value = raw if prev_f is None else 0.5 * raw + 0.5 * prev_f
+        out[i] = value
+        prev_f = value
+    return out
+
+
+def kst(
+    closes: Sequence[Optional[float]],
+    roc_periods: Sequence[int] = (10, 15, 20, 30),
+    sma_periods: Sequence[int] = (10, 10, 10, 15),
+    weights: Sequence[float] = (1.0, 2.0, 3.0, 4.0),
+) -> list[Optional[float]]:
+    """Know Sure Thing (doc #28): the weighted sum of four smoothed ROCs.
+
+    KST = sum_i w_i * SMA(ROC(Close, r_i), s_i) with the classic defaults
+    r = (10, 15, 20, 30), s = (10, 10, 10, 15), w = (1, 2, 3, 4). None while
+    the longest leg is still warming up.
+    """
+    if not (len(roc_periods) == len(sma_periods) == len(weights)):
+        raise ValueError("need the same number of ROC, SMA and weight entries")
+    n = len(closes)
+    out: list[Optional[float]] = [None] * n
+    legs: list[list[Optional[float]]] = [
+        sma_on_valid(roc(closes, r), s) for r, s in zip(roc_periods, sma_periods)
+    ]
+    for i in range(n):
+        total = 0.0
+        for leg, w in zip(legs, weights):
+            v = leg[i]
+            if v is None:
+                total = 0.0
+                break
+            total += float(w) * v
+        else:
+            out[i] = total
+    return out
