@@ -66,6 +66,12 @@ class User(Base):
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     #: Light/dark/system preference.
     theme: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    #: Whether the user has consented to AI features sending portfolio data to the AI provider.
+    ai_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: When the user last granted or revoked AI consent.
+    ai_consent_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    #: Version of the AI disclosure the user agreed to (e.g., "1.0").
+    ai_consent_version: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
 
 # ---------------------------------------------------------------------------

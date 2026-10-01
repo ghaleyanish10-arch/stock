@@ -57,8 +57,11 @@ class UserResponse(BaseModel):
     is_admin: bool = False
     theme: Optional[str] = None
     created_at: Optional[str] = None
+    ai_consent: bool = False
+    ai_consent_updated_at: Optional[str] = None
+    ai_consent_version: Optional[str] = None
 
-    @field_validator("created_at", mode="before")
+    @field_validator("created_at", "ai_consent_updated_at", mode="before")
     @classmethod
     def _stringify_created_at(cls, value):
         if isinstance(value, datetime):
@@ -77,6 +80,13 @@ class ThemeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     theme: str = Field(..., pattern="^(light|dark|system)$")
+
+
+class AIConsentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consent: bool
+    version: Optional[str] = Field(None, max_length=16)
 
 
 TokenResponse.model_rebuild()

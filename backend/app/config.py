@@ -112,6 +112,37 @@ class Settings:
         return problems
 
 
+# --- AI Disclosure -------------------------------------------------------
+# Changing the disclosure text MUST bump this version. The frontend stores the
+# version the user agreed to; a mismatch forces re-consent.
+AI_DISCLOSURE_VERSION = "1.0"
+AI_DISCLOSURE_TEXT = (
+    "Your portfolio data will be sent to the AI provider for analysis. "
+    "The following fields are included:\n\n"
+    "Portfolio identification\n"
+    "- Portfolio name, base currency, creation date\n\n"
+    "Valuation summary\n"
+    "- Total portfolio value, total cost basis, unrealized P&L (amount and %)\n"
+    "- Per-holding: symbol, quantity, average cost, total cost, last traded price, market value, unrealized P&L (amount and %)\n\n"
+    "Performance\n"
+    "- XIRR (annualized return) if computable\n"
+    "- Sector allocation (cost per sector)\n"
+    "- Concentration metrics: top holding %, top 5 holdings %, holding count\n\n"
+    "Transaction history (last 50)\n"
+    "- Per transaction: symbol, side (buy/sell), quantity, price, trade date, fees\n\n"
+    "Data sources\n"
+    "- Portfolio data from your private archive\n"
+    "- Live market data from NEPSE (if available)\n"
+    "- Reference data (security names, sectors)\n\n"
+    "Provider\n"
+    "The data is sent to the configured AI provider (see AI Status page for current provider and model).\n\n"
+    "Your rights\n"
+    "- You can revoke consent at any time from Settings or the AI Consent screen\n"
+    "- Revoking consent immediately blocks all AI features until re-granted\n"
+    "- Data is sent only when you explicitly invoke an AI feature (Ask, Stream, Portfolio Review)\n"
+    "- We do not send data for training; it is used only for your single request"
+)
+
 settings = Settings()
 
 logging.basicConfig(

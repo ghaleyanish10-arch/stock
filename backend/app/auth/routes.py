@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth.deps import CurrentUser, DbSession
 from app.auth.schemas import (
+    AIConsentRequest,
     ChangePasswordRequest,
     LoginRequest,
     RegisterRequest,
@@ -18,6 +19,7 @@ from app.auth.schemas import (
     TokenResponse,
     UserResponse,
 )
+from app.config import AI_DISCLOSURE_VERSION
 from app.auth.security import (
     PasswordPolicyError,
     create_access_token,
@@ -141,6 +143,20 @@ def me(user: CurrentUser) -> UserResponse:
 @router.patch("/me", response_model=UserResponse, summary="Update profile")
 def update_me(payload: ThemeRequest, user: CurrentUser, session: DbSession) -> UserResponse:
     user.theme = payload.theme
+    session.commit()
+    return UserResponse.model_validate(user)
+
+
+@router.patch("/me/ai-consent", response_model=UserResponse, summary="Grant or revoke AI consent")
+def update_ai_consent(payload: AIConsentRequest, user: CurrentUser, session: DbSession) -> UserResponse:
+    if payload.version != AI_DISCLOSURE_VERSION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Consent version mismatch. Server requires version {AI_DISCLOSURE_VERSION}, client sent {payload.version}.",
+        )
+    user.ai_consent = payload.consent
+    user.ai_consent_updated_at = utcnow()
+    user.ai_consent_version = AI_DISCLOSURE_VERSION
     session.commit()
     return UserResponse.model_validate(user)
 

@@ -49,6 +49,10 @@ _ADD_STEPS: tuple[tuple[str, str, str, str], ...] = (
     ("add_funds_fund_size", "funds", "fund_size", "FLOAT"),
     ("add_funds_listing_date", "funds", "listing_date", "VARCHAR(10)"),
     ("add_funds_isin", "funds", "isin", "VARCHAR(32)"),
+    # AI consent columns for User table (B0)
+    ("add_users_ai_consent", "users", "ai_consent", "BOOLEAN DEFAULT 0"),
+    ("add_users_ai_consent_updated_at", "users", "ai_consent_updated_at", "DATETIME"),
+    ("add_users_ai_consent_version", "users", "ai_consent_version", "VARCHAR(16)"),
 )
 
 

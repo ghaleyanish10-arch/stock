@@ -631,5 +631,6 @@ class PortfolioService:
             question=context,
             grounding=grounding_context,
             privacy_consent=True,
+            session=session,
         )
         return answer

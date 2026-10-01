@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.auth.deps import CurrentUser, DbSession
+from app.auth.deps import AIUser, CurrentUser, DbSession
 from app.ai.service import (
     AIService,
     FakeAIClient,
@@ -16,6 +16,7 @@ from app.ai.service import (
     GroundingContext,
     create_ai_client,
 )
+from app.config import AI_DISCLOSURE_VERSION, AI_DISCLOSURE_TEXT
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -47,7 +48,7 @@ class AskResponse(BaseModel):
 async def ask(
     request: AskRequest,
     session: DbSession,
-    user: CurrentUser,
+    user: AIUser,
     ai_service: AIService = Depends(get_ai_service),
 ) -> AskResponse:
     """Ask a question and get a grounded answer based on NEPSE data."""
@@ -61,6 +62,7 @@ async def ask(
         question=request.question,
         grounding=grounding,
         privacy_consent=request.privacy_consent,
+        session=session,
     )
 
     return AskResponse(
@@ -74,7 +76,7 @@ async def ask(
 async def stream_ask(
     request: AskRequest,
     session: DbSession,
-    user: CurrentUser,
+    user: AIUser,
     ai_service: AIService = Depends(get_ai_service),
 ) -> StreamingResponse:
     """Stream a grounded answer token by token."""
@@ -89,6 +91,7 @@ async def stream_ask(
             question=request.question,
             grounding=grounding,
             privacy_consent=request.privacy_consent,
+            session=session,
         ):
             yield f"data: {json.dumps({'chunk': chunk})}\n\n"
         yield "data: [DONE]\n\n"
@@ -118,6 +121,8 @@ async def status(
         "rate_limit_per_minute": 20,
         "daily_limit": 50,
         "privacy_consent_required": True,
+        "disclosure_version": AI_DISCLOSURE_VERSION,
+        "disclosure_text": AI_DISCLOSURE_TEXT,
     }
 
 
@@ -134,6 +139,8 @@ async def status_public(
         "rate_limit_per_minute": 20,
         "daily_limit": 50,
         "privacy_consent_required": True,
+        "disclosure_version": AI_DISCLOSURE_VERSION,
+        "disclosure_text": AI_DISCLOSURE_TEXT,
     }
 
 

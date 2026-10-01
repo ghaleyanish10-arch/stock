@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ai, reference } from "../api";
 import { Card, ErrorState, Loading } from "../components/ui";
 import { fmtInt } from "../format";
+import { AIConsentBanner } from "../components/AIConsentScreen";
 
 export function AIPage() {
   const [question, setQuestion] = useState("");
@@ -167,6 +168,8 @@ export function AIPage() {
           environment variables to enable a real LLM. Currently running in demo mode with fake responses.
         </div>
       )}
+
+      <AIConsentBanner onGrant={() => { /* navigation handled by banner */ }} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: "var(--space-4)" }}>
         <Card title="Ask a Question">

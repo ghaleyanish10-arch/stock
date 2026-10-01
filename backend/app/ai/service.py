@@ -117,6 +117,33 @@ class FakeAIClient(AIClient):
             await asyncio.sleep(0.01)
 
 
+class FailingAIClient(AIClient):
+    """AI client that always fails - for testing error handling without leaking data."""
+
+    def __init__(self, error_msg: str = "Provider unavailable"):
+        self._error_msg = error_msg
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        raise RuntimeError(self._error_msg)
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncGenerator[str, None]:
+        raise RuntimeError(self._error_msg)
+
+
 class OpenAIClient(AIClient):
     """OpenAI-compatible client (works with OpenAI, Azure, Ollama, etc.)."""
 
@@ -318,13 +345,13 @@ class AIService:
         self._daily_counts[user_id] = (stored_date, count + 1)
         return True
 
-    def _check_privacy_consent(self, user_id: str) -> bool:
-        """Check if user has given privacy consent.
-        In a real implementation, this would query the database.
-        For now, we assume consent is tracked via a simple in-memory flag.
-        """
-        # TODO: Replace with actual DB check when privacy consent is implemented
-        return True
+    def _check_privacy_consent(self, user_id: str, session) -> bool:
+        """Check if user has given privacy consent via database."""
+        from app.db.models import User
+        user = session.get(User, user_id)
+        if not user:
+            return False
+        return user.ai_consent
 
     def _build_system_prompt(self, grounding: Optional[GroundingContext] = None) -> str:
         base_prompt = (
@@ -361,6 +388,7 @@ class AIService:
         question: str,
         grounding: Optional[GroundingContext] = None,
         privacy_consent: bool = False,
+        session=None,
     ) -> str:
         """Ask a question and get a grounded answer."""
         # Rate limiting
@@ -372,7 +400,7 @@ class AIService:
             raise HTTPException(429, "Daily AI query limit reached. Try again tomorrow.")
 
         # Privacy consent
-        if not privacy_consent and not self._check_privacy_consent(user_id):
+        if not privacy_consent and not self._check_privacy_consent(user_id, session):
             raise HTTPException(403, "Privacy consent required. Enable AI features in settings.")
 
         # Build system prompt with grounding
@@ -402,6 +430,7 @@ class AIService:
         question: str,
         grounding: Optional[GroundingContext] = None,
         privacy_consent: bool = False,
+        session=None,
     ) -> AsyncGenerator[str, None]:
         """Stream a grounded answer."""
         # Same checks as ask()
@@ -409,7 +438,7 @@ class AIService:
             raise HTTPException(429, "Rate limit exceeded. Try again in a minute.")
         if not self._check_daily_limit(user_id):
             raise HTTPException(429, "Daily AI query limit reached. Try again tomorrow.")
-        if not privacy_consent and not self._check_privacy_consent(user_id):
+        if not privacy_consent and not self._check_privacy_consent(user_id, session):
             raise HTTPException(403, "Privacy consent required. Enable AI features in settings.")
 
         system_prompt = self._build_system_prompt(grounding)

@@ -1501,6 +1501,8 @@ class TestAIService:
     async def test_privacy_consent_required(self):
         """AIService requires privacy consent when not pre-configured."""
         from app.ai.service import AIService, FakeAIClient, RateLimiter, GroundingContext
+        from unittest.mock import MagicMock
+        from app.db.models import User
         
         rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
         client = FakeAIClient()
@@ -1509,9 +1511,23 @@ class TestAIService:
         # With consent = True, should proceed
         grounding = GroundingContext(symbols=[], data_sources=[])
         
-        # Test that _check_privacy_consent returns True for now (stub)
-        # In real implementation, this would check DB
-        assert service._check_privacy_consent("test_user") == True
+        # Test that _check_privacy_consent returns True when user has consent
+        # Create a mock session that returns a user with consent
+        mock_session = MagicMock()
+        mock_user = MagicMock(spec=User)
+        mock_user.ai_consent = True
+        mock_session.get.return_value = mock_user
+        
+        assert service._check_privacy_consent("test_user", mock_session) == True
+        
+        # Test that it returns False when user has no consent
+        mock_user.ai_consent = False
+        mock_session.get.return_value = mock_user
+        assert service._check_privacy_consent("test_user", mock_session) == False
+        
+        # Test that it returns False when user doesn't exist
+        mock_session.get.return_value = None
+        assert service._check_privacy_consent("test_user", mock_session) == False
 
     @pytest.mark.anyio
     async def test_system_prompt_contains_grounding_rules(self):
@@ -1654,6 +1670,105 @@ class TestRegression:
         assert first_shown == dates[0]
         # The first shown date should be the first available in the archive
         assert first_shown == dates[0]
+
+
+class TestAILoggingSafety:
+    """Verify no portfolio data is leaked in error messages when AI provider fails."""
+
+    @pytest.mark.anyio
+    async def test_ai_failure_error_message_contain_no_portfolio_data(self):
+        """Forcing AI provider failure should not include portfolio data in error messages."""
+        import logging
+        from app.ai.service import AIService, FailingAIClient, RateLimiter, GroundingContext
+        from app.portfolio.service import PortfolioService
+        from app.reference.service import ReferenceService
+        from app.nepse.registry import get_adapter
+        from app.db.session import SessionLocal
+
+        # Create a service with a failing AI client
+        rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+        client = FailingAIClient("Simulated provider outage")
+        service = AIService(client=client, rate_limiter=rate_limiter, daily_limit=1000)
+
+        # Build a portfolio review data structure with sensitive data
+        portfolio_data = {
+            "portfolio_name": "Test Portfolio",
+            "valuation": {
+                "total_value": 1234567.89,
+                "total_cost": 987654.32,
+                "unrealized_pnl": 246813.57,
+                "unrealized_pnl_pct": 25.0,
+                "holdings": [
+                    {
+                        "symbol": "NABIL",
+                        "quantity": 100,
+                        "avg_cost": 500.0,
+                        "total_cost": 50000.0,
+                        "ltp": 550.0,
+                        "market_value": 55000.0,
+                        "unrealized_pl": 5000.0,
+                        "unrealized_pl_pct": 10.0,
+                    },
+                    {
+                        "symbol": "NIC",
+                        "quantity": 50,
+                        "avg_cost": 800.0,
+                        "total_cost": 40000.0,
+                        "ltp": 850.0,
+                        "market_value": 42500.0,
+                        "unrealized_pl": 2500.0,
+                        "unrealized_pl_pct": 6.25,
+                    },
+                ],
+                "sector_allocation": {"Commercial Banks": 95000.0},
+                "concentration": {"top_holding_pct": 55.0, "top_5_pct": 100.0, "holding_count": 2},
+}
+        }
+        
+        # Get the AI answer (should fail)
+        with pytest.raises(RuntimeError) as exc:
+            await service.ask(
+                user_id="test_user",
+                question="Analyze my portfolio",
+                grounding=GroundingContext(symbols=["NABIL", "NIC"], data_sources=["archive", "live_market"]),
+                privacy_consent=True,
+            )
+        assert "Simulated provider outage" in str(exc.value) or "Provider unavailable" in str(exc.value)
+
+        # Check that the exception message doesn't contain sensitive data
+        error_msg = str(exc.value)
+        # Sensitive fields that MUST NOT appear in error messages
+        forbidden = [
+            "1234567.89",  # total_value
+            "987654.32",   # total_cost
+            "246813.57",   # unrealized_pnl
+            "50000.0",     # NABIL total_cost
+            "55000.0",     # NABIL market_value
+            "40000.0",     # NIC total_cost
+            "42500.0",     # NIC market_value
+            "unrealized_pnl_pct",  # sensitive field name
+            "avg_cost",    # sensitive field name
+        ]
+        for forbidden_item in forbidden:
+            assert forbidden_item not in error_msg, f"Sensitive data '{forbidden_item}' found in error message: {error_msg}"
+
+# The error message should contain the error but not the data
+        assert "Simulated provider outage" in str(exc.value) or "Provider unavailable" in str(exc.value)
+
+    # Close TestAILoggingSafety class
+
+
+@pytest.fixture
+async def client():
+    from httpx import AsyncClient
+    from httpx._transports.asgi import ASGITransport
+    from app.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://testserver",
+    ) as client:
+        yield client
 
 
 @pytest.fixture

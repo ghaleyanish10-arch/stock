@@ -395,6 +395,9 @@ export interface User {
   is_admin: boolean;
   theme: string | null;
   created_at: string | null;
+  ai_consent?: boolean;
+  ai_consent_version?: string;
+  ai_consent_updated_at?: string;
 }
 
 export interface TokenResponse {

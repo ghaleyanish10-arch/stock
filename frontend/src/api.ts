@@ -330,6 +330,11 @@ export const analytics = {
     plain<ChartResponse>(`/api/analytics/chart/${encodeURIComponent(symbol)}${qs(params)}`, {
       signal,
     }),
+  disclosurePublic: (signal?: AbortSignal) =>
+    plain<{ disclosure_version: string; disclosure_text: string }>(
+      `/api/ai/status/public`,
+      { signal },
+    ),
 };
 
 /** The one composite company response, so the page needs a single request. */
@@ -409,6 +414,11 @@ export const auth = {
     }),
   setTheme: (theme: string) =>
     plain<User>("/api/auth/me", { method: "PATCH", body: JSON.stringify({ theme }) }),
+  setAIConsent: (consent: boolean, version = "1.0") =>
+    plain<User>("/api/auth/me/ai-consent", {
+      method: "PATCH",
+      body: JSON.stringify({ consent, version }),
+    }),
 };
 
 /* -- Phase 4: Portfolio --------------------------------------------------- */
@@ -624,6 +634,11 @@ export const ai = {
     plain<AIStatus>("/api/ai/status"),
   statusPublic: () =>
     plain<AIStatus>("/api/ai/status/public"),
+  disclosurePublic: (signal?: AbortSignal) =>
+    plain<{ disclosure_version: string; disclosure_text: string }>(
+      `/api/ai/status/public`,
+      { signal },
+    ),
   ask: (request: AskRequest) =>
     plain<AskResponse>("/api/ai/ask", {
       method: "POST",

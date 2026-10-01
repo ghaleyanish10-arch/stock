@@ -14,6 +14,7 @@ import {
   Stat,
   Missing,
 } from "../components/ui";
+import { AIConsentBanner } from "../components/AIConsentScreen";
 
 interface NewTransaction {
   symbol: string;
@@ -183,6 +184,7 @@ export function PortfolioPage() {
         <div style={{ minWidth: 0 }}>
           {selectedId && (
             <>
+              <AIConsentBanner onGrant={() => { /* navigation handled by banner */ }} />
               {holdings.isLoading || transactions.isLoading || valuation.isLoading ? (
                 <Loading label="Loading portfolio data" />
               ) : holdings.error ? (

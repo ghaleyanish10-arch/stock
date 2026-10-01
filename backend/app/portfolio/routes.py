@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.auth.deps import CurrentUser, DbSession
+from app.auth.deps import AIUser, CurrentUser, DbSession
 from app.portfolio.service import PortfolioService
 from app.nepse.registry import get_adapter
 from app.reference.service import ReferenceService
@@ -268,7 +268,7 @@ async def portfolio_ai_review(
     portfolio_id: str,
     request: PortfolioReviewRequest,
     session: DbSession,
-    user: CurrentUser,
+    user: AIUser,
     ai_service: AIService = Depends(get_ai_service),
 ) -> dict:
     """Get AI-powered portfolio review with grounded analysis."""

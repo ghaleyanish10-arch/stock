@@ -100,4 +100,15 @@ def require_admin(user: CurrentUser) -> User:
     return user
 
 
+def require_ai_consent(user: CurrentUser) -> User:
+    """Guard for AI endpoints: require user to have granted AI consent."""
+    if not user.ai_consent:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="AI consent required. Enable AI features in settings.",
+        )
+    return user
+
+
 AdminUser = Annotated[User, Depends(require_admin)]
+AIUser = Annotated[User, Depends(require_ai_consent)]
