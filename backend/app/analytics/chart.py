@@ -74,11 +74,11 @@ from app.analytics.indicators import (
     volume_profile,
     volume_oscillator,
     vwap_series,
-    vwma,
     williams_r,
     wma,
     rvi,
     Bar,
+    woodie_pivots,
 )
 from app.realtime.service import get_realtime_service
 from app.archive.service import ArchiveService
