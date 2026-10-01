@@ -799,7 +799,15 @@ export type IndicatorKey =
   | "rci_14"
   | "price_osc_abs"
   | "price_osc_pct"
-  | "rvi_volatility_14";
+  | "rvi_volatility_14"
+  | "chande_kroll_long"
+  | "chande_kroll_short"
+  | "choppiness_14"
+  | "chop_zone"
+  | "envelopes_upper"
+  | "envelopes_middle"
+  | "envelopes_lower"
+  | "mass_index";
 
 export interface ChartRangeOption {
   value: string;

@@ -31,6 +31,9 @@ from app.analytics.indicators import (
     atr,
     average_price,
     accelerator_oscillator,
+    chande_kroll_stop,
+    chop_zone,
+    choppiness,
     ama,
     cmo,
     connors_rsi,
@@ -70,6 +73,8 @@ from app.analytics.indicators import (
     price_oscillator,
     rci,
     relative_volatility_index,
+    envelopes,
+    mass_index,
     smi_ergodic,
     fractals,
     majority_rule,
@@ -578,6 +583,21 @@ async def chart(
         out_indicators["price_osc_pct"] = po["pct"]
     if "rvi_volatility" in wanted:
         out_indicators["rvi_volatility_14"] = relative_volatility_index(w_closes, 14)
+    if "chande_kroll" in wanted:
+        ck = chande_kroll_stop(bars, 10, 1.0, 9)
+        out_indicators["chande_kroll_long"] = ck["long_stop"]
+        out_indicators["chande_kroll_short"] = ck["short_stop"]
+    if "choppiness" in wanted:
+        out_indicators["choppiness_14"] = choppiness(bars, 14)
+    if "chop_zone" in wanted:
+        out_indicators["chop_zone"] = chop_zone(bars, 21, 14)
+    if "envelopes" in wanted:
+        env = envelopes(w_closes, 20, 2.0)
+        out_indicators["envelopes_upper"] = env["upper"]
+        out_indicators["envelopes_middle"] = env["middle"]
+        out_indicators["envelopes_lower"] = env["lower"]
+    if "mass_index" in wanted:
+        out_indicators["mass_index"] = mass_index(bars, 9, 25)
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:

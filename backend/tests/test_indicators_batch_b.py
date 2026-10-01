@@ -56,6 +56,11 @@ from app.analytics.indicators import (
     relative_volatility_index,
     smi_ergodic,
     roc as roc_fn,
+    chande_kroll_stop,
+    chop_zone,
+    choppiness,
+    envelopes,
+    mass_index,
 )
 
 
@@ -680,3 +685,105 @@ class TestRelativeVolatilityIndex:
 
     def test_flat_is_none(self):
         assert all(v is None for v in relative_volatility_index([4.0] * 8, 3))
+
+
+# ---------------------------------------------------------------------------
+# Doc #34 Chande Kroll; #35 Choppiness; #36 Chop Zone; #37 Envelopes; #38 Mass
+# ---------------------------------------------------------------------------
+
+
+def ranged_bar(p, date="2026-01-01"):
+    """Open/close at p, high p+1, low p-1: true range and bar range are both 2."""
+    return bar(p, p + 1.0, p - 1.0, p, date=date)
+
+
+class TestChandeKroll:
+    def test_constant_range_hand_values(self):
+        bars = [ranged_bar(10.0) for _ in range(20)]
+        out = chande_kroll_stop(bars, 10, 1.0, 9)
+        # ATR = 2 everywhere (TR = max(2, |11-10|, |9-10|)); HH = 11, LL = 9:
+        # pre-long = 11 - 2 = 9, pre-short = 9 + 2 = 11; rolling max/min keep them.
+        assert out["long_stop"][16] is None
+        assert out["long_stop"][17] == pytest.approx(9.0)
+        assert out["short_stop"][17] == pytest.approx(11.0)
+
+    def test_shorter_params_hand(self):
+        bars = [ranged_bar(10.0) for _ in range(6)]
+        out = chande_kroll_stop(bars, 2, 0.5, 3)
+        # ATR(2) = 2; pre-long = 11 - 1 = 10; pre-short = 9 + 1 = 10;
+        # first final values at idx 1 + 2 = 3.
+        assert out["long_stop"][2] is None
+        assert out["long_stop"][3] == pytest.approx(10.0)
+        assert out["short_stop"][3] == pytest.approx(10.0)
+
+
+class TestChoppiness:
+    def test_no_net_direction_is_100(self):
+        bars = [ranged_bar(10.0) for _ in range(15)]
+        out = choppiness(bars, 14)
+        # sum(TR) = 28, HH-LL = 2 -> ratio 14 -> 100*log10(14)/log10(14) = 100.
+        assert out[13] == pytest.approx(100.0)
+
+    def test_trending_is_low(self):
+        bars = [ranged_bar(float(x)) for x in range(1, 16)]
+        out = choppiness(bars, 14)
+        # sum(TR) = 28, HH-LL = 15 - 0 = 15 (highs/lows, not closes) ->
+        # ratio 28/15: 100*log10(1.8667)/log10(14) = 23.65.
+        assert out[13] == pytest.approx(23.65, abs=1e-2)
+
+    def test_locked_window_is_none(self):
+        bars = [flat_bar(10.0) for _ in range(15)]
+        assert choppiness(bars, 14)[13] is None
+
+
+class TestChopZone:
+    def test_flat_market_is_zero(self):
+        bars = [ranged_bar(10.0) for _ in range(25)]
+        out = chop_zone(bars, 21, 14)
+        # EMA(typical=10) = 10; open and close sit exactly on the line -> 0 votes.
+        assert out[24] == 0.0
+
+    def test_uptrend_scores_positive(self):
+        bars = [ranged_bar(float(x)) for x in range(1, 31)]
+        out = chop_zone(bars, 21, 14)
+        assert out[29] is not None
+        assert out[29] > 0
+
+    def test_downtrend_scores_negative(self):
+        bars = [ranged_bar(30.0 - float(x)) for x in range(1, 31)]
+        out = chop_zone(bars, 21, 14)
+        assert out[29] < 0
+
+    def test_missing_ohlc_is_none(self):
+        bars = [ranged_bar(10.0), bar(None, 11.0, 9.0, 10.0)]
+        assert chop_zone(bars, 21, 14)[1] is None
+
+
+class TestEnvelopes:
+    def test_percent_bands(self):
+        closes = [float(x) for x in range(1, 31)]
+        out = envelopes(closes, 20, 2.0)
+        mid = 20.5
+        assert out["middle"][29] == pytest.approx(mid)
+        assert out["upper"][29] == pytest.approx(mid * 1.02)
+        assert out["lower"][29] == pytest.approx(mid * 0.98)
+
+    def test_warmup(self):
+        out = envelopes([1.0, 2.0, 3.0], 20, 2.0)
+        assert all(v is None for v in out["upper"])
+
+
+class TestMassIndex:
+    def test_flat_range_is_exactly_sum_period(self):
+        bars = [ranged_bar(10.0) for _ in range(41)]
+        out = mass_index(bars, 9, 25)
+        # ratio = EMA9(2)/EMA9(EMA9(2)) = 1.0 exactly -> sum = 25; the double
+        # EMA warms at idx16, the 25-sum at idx16+24 = 40.
+        assert out[39] is None
+        assert out[40] == pytest.approx(25.0)
+
+    def test_expansion_pushes_above(self):
+        bars = [ranged_bar(10.0) for _ in range(30)]
+        bars += [bar(10.0, 15.0, 5.0, 10.0) for _ in range(15)]  # range 10
+        out = mass_index(bars, 9, 25)
+        assert out[-1] > 25.0  # double-EMA lags the expansion -> ratio > 1

@@ -3344,3 +3344,166 @@ def relative_volatility_index(
             continue
         out[i] = 100.0 * u / (u + d)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Batch B doc #34-#38: Chande Kroll Stop, Choppiness, Chop Zone, Envelopes,
+# Mass Index
+# ---------------------------------------------------------------------------
+
+
+def chande_kroll_stop(
+    bars: Sequence[Bar],
+    atr_period: int = 10,
+    atr_mult: float = 1.0,
+    stop_period: int = 9,
+) -> dict[str, list[Optional[float]]]:
+    """Chande Kroll Stop (doc #34): ATR-based trailing stop levels.
+
+    Preliminary long stop = HighestHigh(N) - ATR(N) * mult; preliminary short
+    stop = LowestLow(N) + ATR(N) * mult. The final stops smooth those over
+    `stop_period` bars: long = rolling max of the preliminary long stop (the
+    most permissive), short = rolling min of the preliminary short stop.
+    Keys: 'long_stop', 'short_stop'.
+    """
+    if atr_period <= 0 or stop_period <= 0:
+        raise ValueError("periods must be positive")
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    atr_series = atr(bars, atr_period)
+    pre_long: list[Optional[float]] = [
+        None if (h is None or a is None) else float(h) - float(a) * atr_mult
+        for h, a in zip(highest(highs, atr_period), atr_series)
+    ]
+    pre_short: list[Optional[float]] = [
+        None if (l is None or a is None) else float(l) + float(a) * atr_mult
+        for l, a in zip(lowest(lows, atr_period), atr_series)
+    ]
+    return {"long_stop": highest(pre_long, stop_period), "short_stop": lowest(pre_short, stop_period)}
+
+
+def choppiness(bars: Sequence[Bar], period: int = 14) -> list[Optional[float]]:
+    """Choppiness Index (doc #35):
+    100 * log10(sum(TR, N) / (HighestHigh(N) - LowestLow(N))) / log10(N).
+
+    Reads 0-100: above ~61.8 the market is range-bound, below ~38.3 it is
+    trending. A window with zero range (locked prices) divides 0 by 0 - the
+    ratio is undefined there, None not 100.
+    """
+    if period <= 1:
+        raise ValueError("period must be at least 2")
+    # True-range series, matching atr()'s convention: the first bar (or a bar
+    # after a missing close) degrades to H - L.
+    trs: list[Optional[float]] = []
+    prev_close: Optional[float] = None
+    for b in bars:
+        if b.high is None or b.low is None:
+            trs.append(None)
+            prev_close = b.close
+            continue
+        trs.append(true_range(float(b.high), float(b.low), prev_close))
+        prev_close = b.close
+    highs = [b.high for b in bars]
+    lows = [b.low for b in bars]
+    hh = highest(highs, period)
+    ll = lowest(lows, period)
+    n_log = math.log10(period)
+    out: list[Optional[float]] = [None] * len(bars)
+    for i in range(period - 1, len(bars)):
+        window = trs[i - period + 1 : i + 1]
+        if any(v is None for v in window) or hh[i] is None or ll[i] is None:
+            continue
+        range_ = float(hh[i]) - float(ll[i])  # type: ignore[arg-type]
+        if range_ == 0:
+            continue
+        out[i] = 100.0 * math.log10(sum(float(v) for v in window) / range_) / n_log
+    return out
+
+
+def chop_zone(bars: Sequence[Bar], period: int = 21, atr_period: int = 14) -> list[Optional[float]]:
+    """Chop Zone (doc #36): a -4..+4 trend/chop classification.
+
+    The doc's formula is implementation-specific; this version scores the
+    open and the close against EMA(typical price, `period`) in ATR units:
+    beyond +0.5 ATR above the line votes +2, above it +1, symmetrically -2/-1
+    below, an exact touch votes 0. +4 = both prices clearly above (trending
+    up), -4 clearly below (trending down), near 0 = chop. The exact scoring
+    bands are this implementation's choice and are stated here for honesty.
+    """
+    if period <= 0 or atr_period <= 0:
+        raise ValueError("periods must be positive")
+    typical = hlc3_series(bars)
+    line = ema_on_valid(typical, period)
+    atr_series = atr(bars, atr_period)
+
+    def vote(p: Optional[float], ema_v: Optional[float], a: Optional[float]) -> Optional[int]:
+        if p is None or ema_v is None or a is None:
+            return None
+        d = float(p) - float(ema_v)
+        half = 0.5 * float(a)
+        if d > half:
+            return 2
+        if d > 0:
+            return 1
+        if d < -half:
+            return -2
+        if d < 0:
+            return -1
+        return 0
+
+    out: list[Optional[float]] = [None] * len(bars)
+    for i, b in enumerate(bars):
+        v_open = vote(b.open, line[i], atr_series[i])
+        v_close = vote(b.close, line[i], atr_series[i])
+        if v_open is None or v_close is None:
+            continue
+        out[i] = float(v_open + v_close)
+    return out
+
+
+def envelopes(
+    closes: Sequence[Optional[float]], period: int = 20, percent: float = 2.0
+) -> dict[str, list[Optional[float]]]:
+    """Envelopes (doc #37): SMA(N) plus/minus a fixed percent.
+
+    Upper = MA * (1 + p/100), Lower = MA * (1 - p/100); default 2% on 20
+    bars, the common envelope setting. Keys: 'upper', 'middle', 'lower'.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    middle = sma(closes, period)
+    k = percent / 100.0
+    upper: list[Optional[float]] = [None if m is None else m * (1.0 + k) for m in middle]
+    lower: list[Optional[float]] = [None if m is None else m * (1.0 - k) for m in middle]
+    return {"upper": upper, "middle": middle, "lower": lower}
+
+
+def mass_index(
+    bars: Sequence[Bar], ema_period: int = 9, sum_period: int = 25
+) -> list[Optional[float]]:
+    """Mass Index (doc #38): sum over `sum_period` of
+    EMA(H-L, ema) / EMA(EMA(H-L, ema), ema).
+
+    Range expansion pushes the ratio above 1 (double-EMA lags the expansion)
+    and contraction pulls it below; the classic reversal warning is a 'reversal
+    bulge' - the sum rising past 27 and falling back below 26.5. A flat range
+    makes the ratio exactly 1.0 and the sum exactly `sum_period`.
+    """
+    if ema_period <= 0 or sum_period <= 0:
+        raise ValueError("periods must be positive")
+    ranges: list[Optional[float]] = [
+        None if (b.high is None or b.low is None) else float(b.high) - float(b.low)
+        for b in bars
+    ]
+    e1 = ema(ranges, ema_period)
+    e2 = ema(e1, ema_period)
+    ratio: list[Optional[float]] = [
+        None if (a is None or b_ is None or b_ == 0) else a / b_ for a, b_ in zip(e1, e2)
+    ]
+    out: list[Optional[float]] = [None] * len(bars)
+    for i in range(sum_period - 1, len(bars)):
+        window = ratio[i - sum_period + 1 : i + 1]
+        if any(v is None for v in window):
+            continue
+        out[i] = sum(float(v) for v in window)  # type: ignore[arg-type]
+    return out

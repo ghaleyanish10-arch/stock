@@ -106,7 +106,12 @@ export type IndicatorToken =
   | "smi_ergodic"
   | "rci"
   | "price_osc"
-  | "rvi_volatility";
+  | "rvi_volatility"
+  | "chande_kroll"
+  | "choppiness"
+  | "chop_zone"
+  | "envelopes"
+  | "mass_index";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
 export type IndicatorId = IndicatorToken;
@@ -522,6 +527,29 @@ export const INDICATORS: IndicatorDef[] = [
     desc: "SMA(10) minus SMA(30), shown as a percent of the slow MA (absolute form in the payload: price_osc_abs) - a slow, readable momentum gauge.",
   },
   { key: "rvi_volatility", token: "rvi_volatility", label: "Relative Volatility Index", color: "#8d6e63", pane: "osc", series: ["rvi_volatility_14"], desc: "Chande's RSI logic applied to standard deviation: volatility counted on up days vs down days, 0-100. Above 50 volatility skews bullish, below 50 bearish." },
+  {
+    key: "chande_kroll",
+    token: "chande_kroll",
+    label: "Chande Kroll Stop",
+    color: "#bf360c",
+    pane: "overlay",
+    series: ["chande_kroll_long", "chande_kroll_short"],
+    colors: { chande_kroll_long: "#43a047", chande_kroll_short: "#e53935" },
+    desc: "Volatility trailing stops: HighestHigh - ATR (long side) and LowestLow + ATR (short side), held at their extreme for 9 bars - breakouts beyond them mark real moves.",
+  },
+  { key: "choppiness", token: "choppiness", label: "Choppiness Index 14", color: "#78909c", pane: "osc", series: ["choppiness_14"], desc: "0-100: how much of the 14-bar range is back-and-filling. Above ~61.8 the market is chopping; below ~38.3 it is trending." },
+  { key: "chop_zone", token: "chop_zone", label: "Chop Zone", color: "#558b2f", pane: "trend", series: ["chop_zone"], desc: "Scores open and close against the EMA(21) of typical price in ATR units (-4..+4): clearly above = trending up, clearly below = down, near 0 = chop." },
+  {
+    key: "envelopes",
+    token: "envelopes",
+    label: "Envelopes 20 / 2%",
+    color: "#00acc1",
+    pane: "overlay",
+    series: ["envelopes_upper", "envelopes_middle", "envelopes_lower"],
+    colors: { envelopes_middle: "#00838f" },
+    desc: "SMA(20) with fixed 2% bands - price touching the upper band reads stretched to the upside, the lower band to the downside.",
+  },
+  { key: "mass_index", token: "mass_index", label: "Mass Index 25", color: "#6d4c41", pane: "osc", series: ["mass_index"], desc: "Sum of the range's EMA over its double-smoothed EMA (25 bars): a rise past 27 that falls back below 26.5 - the 'reversal bulge' - flags trend reversals." },
 ];
 
 /** Default picker mix when nothing is stored. */
