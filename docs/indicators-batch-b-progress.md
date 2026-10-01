@@ -60,10 +60,10 @@
 | 46 | Advance/Decline | Market | ✅ Done | a2374b2 | 2 | `/api/analytics/breadth` |
 | 47 | Balance of Power | Momentum | ✅ Done | a2374b2 | 3 | |
 | 48 | Correlation | Comparison | ✅ Done | a2374b2 | 4 | |
-| 49 | Correlation Log | Comparison | ✅ Done | **current** | 4 | |
-| 50 | Ratio | Comparison | ✅ Done | **current** | 4 | |
-| 51 | Spread | Comparison | ✅ Done | **current** | 2 | |
-| 52 | Compare | Comparison | ✅ Done | **current** | 4 | |
+| 49 | Correlation Log | Comparison | ✅ Done | 333d15f | 4 | |
+| 50 | Ratio | Comparison | ✅ Done | 333d15f | 4 | |
+| 51 | Spread | Comparison | ✅ Done | 333d15f | 2 | |
+| 52 | Compare | Comparison | ✅ Done | 333d15f | 4 | |
 | 53 | Median Price | Price | ⏳ Not Started | - | - | |
 | 54 | Typical Price | Price | ⏳ Not Started | - | - | |
 | 55 | Price Channel | Price | ⏳ Not Started | - | - | |
