@@ -150,12 +150,25 @@ _archive = ArchiveService(get_adapter())
 #: Calendar look-backs offered as range shortcuts. Availability depends on how
 #: far back the local archive reaches, which is reported per range.
 RANGE_DAYS: dict[str, int] = {
+    "1W": 7,
     "1M": 31,
     "3M": 92,
     "6M": 183,
     "1Y": 366,
     "ALL": 3650,
 }
+
+#: Shortcut order as offered on the chart card. YTD is computed from Jan 1 of
+#: the latest bar's year rather than a fixed look-back, so it lives in
+#: RANGE_ORDER instead of RANGE_DAYS.
+RANGE_ORDER: list[str] = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"]
+
+
+def _want_date(latest: str, range_key: str) -> str:
+    """First calendar date a range shortcut covers, measured from `latest`."""
+    if range_key == "YTD":
+        return date.fromisoformat(latest).replace(month=1, day=1).isoformat()
+    return (date.fromisoformat(latest) - timedelta(days=RANGE_DAYS[range_key])).isoformat()
 
 #: Performance grid columns, as (label, calendar days).
 PERFORMANCE_GRID: list[tuple[str, int]] = [
@@ -239,6 +252,9 @@ async def chart(
         None,
         description="Second symbol for correlation / ratio / spread / compare tokens",
     ),
+    basis: str = Query("as_traded", description="as_traded | adjusted"),
+    start: Optional[str] = Query(None, description="Custom window start (YYYY-MM-DD)"),
+    end: Optional[str] = Query(None, description="Custom window end (YYYY-MM-DD)"),
 ) -> dict[str, Any]:
     """Everything the chart renders, in one response.
 
@@ -248,10 +264,22 @@ async def chart(
     showing a shorter period than the user asked for.
     """
     sym = validate_symbol(symbol)
-    if range_key not in RANGE_DAYS:
-        raise HTTPException(400, f"Unknown range {range_key!r}. Expected one of {sorted(RANGE_DAYS)}.")
+    if range_key not in RANGE_ORDER:
+        raise HTTPException(400, f"Unknown range {range_key!r}. Expected one of {RANGE_ORDER}.")
     if mode not in ("ADJUSTED", "UNADJUSTED"):
         raise HTTPException(400, "mode must be ADJUSTED or UNADJUSTED.")
+    if basis not in ("as_traded", "adjusted"):
+        raise HTTPException(400, "basis must be as_traded or adjusted.")
+    try:
+        start_d = date.fromisoformat(start) if start else None
+        end_d = date.fromisoformat(end) if end else None
+    except ValueError as exc:
+        raise HTTPException(400, "start and end must be YYYY-MM-DD dates.") from exc
+    if start_d and end_d and start_d > end_d:
+        raise HTTPException(400, "start must be on or before end.")
+    # `adjusted` and the legacy ADJUSTED mode both ask for a corrected series;
+    # neither can be honoured today (see price_mode below).
+    wants_adjusted = basis == "adjusted" or mode == "ADJUSTED"
 
     rows = session.scalars(
         select(DailyBar).where(DailyBar.symbol == sym).order_by(DailyBar.business_date)
@@ -333,12 +361,41 @@ async def chart(
             volumes[i] = float(q_vol) if q_vol else volumes[i]
             live_mode = "overlay"
 
-    # -- range windowing, with an honest "not fully covered" ----------------
-    want = (date.fromisoformat(latest) - timedelta(days=RANGE_DAYS[range_key])).isoformat()
-    start_idx = next((i for i, d in enumerate(dates) if d >= want), None)
-    if start_idx is None:
-        start_idx = 0
+    # -- window selection ----------------------------------------------------
+    # A custom start/end (the card's date pickers) overrides the range
+    # shortcuts. Either way the window is a slice of the archived+live series;
+    # indicators are computed on the slice so their warm-up nulls stay honest
+    # (missing is not zero).
+    if start_d is not None or end_d is not None:
+        eff_start = (start_d or date.fromisoformat(dates[0])).isoformat()
+        eff_end = (end_d or date.fromisoformat(latest)).isoformat()
+        start_idx = next((i for i, d in enumerate(dates) if d >= eff_start), None)
+        end_idx = next(
+            (i for i in range(len(dates) - 1, -1, -1) if dates[i] <= eff_end), None
+        )
+        if start_idx is None or end_idx is None or start_idx > end_idx:
+            raise HTTPException(
+                404,
+                f"No archived bars for {sym} between {eff_start} and {eff_end}.",
+            )
+        range_requested = "custom"
+        days_requested = (
+            date.fromisoformat(eff_end) - date.fromisoformat(eff_start)
+        ).days
+    else:
+        want = _want_date(latest, range_key)
+        start_idx = next((i for i, d in enumerate(dates) if d >= want), None)
+        if start_idx is None:
+            start_idx = 0
+        end_idx = len(dates) - 1
+        range_requested = range_key
+        days_requested = (
+            (date.fromisoformat(latest) - date.fromisoformat(want)).days
+            if range_key == "YTD"
+            else RANGE_DAYS[range_key]
+        )
     first_shown = dates[start_idx]
+    window_last = dates[end_idx]
 
     # `available` means we can show a meaningful window at all. `complete` means
     # the archive reaches past the requested start, so the whole period is
@@ -346,18 +403,25 @@ async def chart(
     # 366 days a "1Y" label implies, and calling that unavailable would be
     # technically true and practically useless. Both numbers are reported and
     # the UI states the real first date.
-    complete = start_idx > 0 or first_shown < want
-    days_available = (date.fromisoformat(latest) - date.fromisoformat(first_shown)).days
-    days_requested = RANGE_DAYS[range_key]
-    range_available = start_idx is not None and first_shown <= latest
+    # `complete` means the archive reaches past the requested start, so the
+    # whole period is genuinely covered. A custom window is complete when the
+    # archive starts on or before the requested start date.
+    if range_requested == "custom":
+        want = None
+        complete = dates[0] <= eff_start
+    else:
+        want = _want_date(window_last, range_requested)
+        complete = dates[0] < want
+    days_available = (date.fromisoformat(window_last) - date.fromisoformat(first_shown)).days
+    range_available = first_shown <= window_last
 
     window = {
-        "dates": dates[start_idx:],
-        "open": opens[start_idx:],
-        "high": highs[start_idx:],
-        "low": lows[start_idx:],
-        "close": closes[start_idx:],
-        "volume": volumes[start_idx:],
+        "dates": dates[start_idx : end_idx + 1],
+        "open": opens[start_idx : end_idx + 1],
+        "high": highs[start_idx : end_idx + 1],
+        "low": lows[start_idx : end_idx + 1],
+        "close": closes[start_idx : end_idx + 1],
+        "volume": volumes[start_idx : end_idx + 1],
     }
 
     from app.analytics.indicators import Bar
@@ -434,6 +498,10 @@ async def chart(
         out_indicators["accumulation_distribution"] = accumulation_distribution_line(bars)
     if "cmf" in wanted:
         out_indicators["chaikin_money_flow_20"] = chaikin_money_flow(bars, 20)
+        out_indicators["money_flow_index_14"] = money_flow_index(bars, 14)
+    if "mfi" in wanted:
+        # Was frontend-only before the chart fix: the MFI 14 picker chip called
+        # a token no handler served, so the click silently did nothing.
         out_indicators["money_flow_index_14"] = money_flow_index(bars, 14)
     if "roc" in wanted:
         out_indicators["roc_1"] = roc(w_closes, 1)
@@ -777,7 +845,16 @@ async def chart(
     if "force_index" in wanted:
         out_indicators["force_index_13"] = force_index(bars, 13)
     if "technical_ratings" in wanted:
-        out_indicators["technical_ratings"] = technical_ratings(bars)
+        tr = technical_ratings(bars)
+        # The ratings function returns scalars per component; project them onto
+        # the shared date axis as one-value series (latest only) so the chart
+        # can draw them like any other line.
+        def _tr_series(v: Optional[float]) -> list[Optional[float]]:
+            return [v if i == len(dates_w) - 1 else None for i in range(len(dates_w))]
+
+        out_indicators["tech_overall"] = _tr_series(tr["overall"])
+        out_indicators["tech_ma_rating"] = _tr_series(tr["ma_rating"])
+        out_indicators["tech_osc_rating"] = _tr_series(tr["osc_rating"])
 
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
@@ -865,7 +942,7 @@ async def chart(
             ),
         },
         "range": {
-            "requested": range_key,
+            "requested": range_requested,
             "available": range_available,
             "complete": complete,
             "first_shown": first_shown,
@@ -875,29 +952,31 @@ async def chart(
             "reason": (
                 None
                 if complete
-                else f"Archive starts {dates[0]}, inside the {range_key} window, so this "
+                else f"Archive starts {dates[0]}, inside the {range_requested} window, so this "
                 f"period is only covered from {first_shown}."
             ),
             "options": [
                 {
                     "value": key,
                     "available": True,
-                    "complete": _range_complete(dates, latest, days),
-                    "first_shown": _range_first(dates, latest, days),
+                    "complete": dates[0] < _want_date(latest, key),
+                    "first_shown": next(
+                        (d for d in dates if d >= _want_date(latest, key)), dates[0]
+                    ),
                 }
-                for key, days in RANGE_DAYS.items()
+                for key in RANGE_ORDER
             ],
         },
         "price_mode": {
-            "requested": mode,
-            "applied": "UNADJUSTED",
-            "differs_from_requested": mode == "ADJUSTED",
+            "requested": "adjusted" if wants_adjusted else "as_traded",
+            "applied": "as_traded",
+            "differs_from_requested": wants_adjusted,
             "reason": (
                 None
-                if mode == "UNADJUSTED"
+                if not wants_adjusted
                 else "NEPSE publishes no split or bonus ex-dates, so an adjusted "
-                "series cannot be built. Prices are shown unadjusted and this "
-                "mode is a no-op rather than a silent fabrication."
+                "series cannot be built. Prices are shown as traded and this "
+                "basis is a no-op rather than a silent fabrication."
             ),
         },
         "panel": {
