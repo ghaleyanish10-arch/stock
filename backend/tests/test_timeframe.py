@@ -215,11 +215,28 @@ class TestSmaWarmup:
         assert all(v is None for v in sma_vals[:19])
         assert sma_vals[19] is not None
 
-    def test_rsi14_on_1w_is_non_null(self):
-        """RSI(14) on 1W window: needs 14 bars, so with 5 bars it's null."""
+    def test_rsi14_on_1w_non_null_when_enough_bars(self):
+        """RSI(14) on 1W window: non-null when 14+ bars exist before the window."""
+        # 20 weekly bars with oscillating prices - enough for RSI(14)
+        bars = [
+            Bar(date=f"2026-09-{20+i:02d}", open=100+i, high=102+i, low=98+i, close=101+i + (i % 3) - 1, volume=1000)
+            for i in range(20)
+        ]
+        closes = [b.close for b in bars]
+        from app.analytics.indicators import rsi_on_valid
+        rsi_vals = rsi_on_valid([c for c in closes if c is not None], 14)
+        # Should have non-null values after warm-up (14 periods)
+        non_null = [v for v in rsi_vals if v is not None]
+        assert len(non_null) > 0, "RSI should have non-null values with 20 bars"
+        # At least some should be non-null after warm-up
+        assert len([v for v in rsi_vals if v is not None]) >= 6  # 20 - 14 = 6 non-null expected
+
+    def test_rsi14_on_1w_null_when_insufficient_bars(self):
+        """RSI(14) on 1W window: null when fewer than 14 bars exist."""
+        # Only 5 weekly bars - not enough for RSI(14)
         bars = [
             Bar(date=f"2026-09-{20+i:02d}", open=100+i, high=102+i, low=98+i, close=101+i, volume=1000)
-            for i in range(5)  # 5 weekly bars
+            for i in range(5)
         ]
         closes = [b.close for b in bars]
         from app.analytics.indicators import rsi_on_valid
