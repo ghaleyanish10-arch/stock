@@ -334,6 +334,12 @@ export const analytics = {
       start?: string;
       /** Custom window end (YYYY-MM-DD). */
       end?: string;
+      /** Timeframe: D | W | M | auto (NEPSE-style per range). */
+      tf?: string;
+      /** Week start day for W timeframe: sunday | monday. */
+      week_start?: string;
+      /** Bar date label: last_session (last session date) | period_start (period start date). */
+      bar_label_mode?: string;
     } = {},
     signal?: AbortSignal,
   ) =>

@@ -627,6 +627,22 @@ export interface ChartSeries {
   volume: (number | null)[];
 }
 
+/** Timeframe selector values (doc B). */
+export type Timeframe = "auto" | "D" | "W" | "M";
+
+/** Bar label mode for aggregated candles. */
+export type BarLabelMode = "last_session" | "period_start";
+
+/** Week start day for weekly aggregation. */
+export type WeekStart = "sunday" | "monday";
+
+/** Warm-up status for indicator chips. */
+export interface IndicatorWarmup {
+  reason: string;
+  minHistory?: number;
+  barsAvailable?: number;
+}
+
 export type IndicatorKey =
   | "sma_20"
   | "ema_20"
@@ -871,6 +887,17 @@ export interface ChartResponse {
     differs_from_requested: boolean;
     reason: string | null;
   };
+  timeframe: {
+    requested: string;
+    applied: string;
+    auto: boolean;
+    auto_rule: Record<string, string> | null;
+    spec_status: string;
+    week_start: string;
+    bar_label_mode: string;
+    note: string;
+  };
+  warm_up: Record<string, { first_available: string | null; reason: string }>;
   panel: {
     day: {
       as_of: string | null;

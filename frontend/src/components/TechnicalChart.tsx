@@ -186,6 +186,8 @@ export function TechnicalChart({
   marketClosed,
   statusByKey,
   showVolume = true,
+  timeframe,
+  warmUp,
 }: {
   data: ChartData;
   /** Selected registry ids; defaults to the classic mix. */
@@ -202,6 +204,17 @@ export function TechnicalChart({
   statusByKey?: Record<string, string>;
   /** Show the volume pane (default true). */
   showVolume?: boolean;
+  /** Timeframe info from backend (applied tf, week_start, bar_label_mode). */
+  timeframe?: {
+    requested: string;
+    applied: string;
+    auto: boolean;
+    week_start: string;
+    bar_label_mode: string;
+    note: string;
+  };
+  /** Warm-up info from backend per indicator. */
+  warmUp?: Record<string, { first_available: string | null; reason: string }>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -276,6 +289,8 @@ export function TechnicalChart({
     // The backend keys `disabled` by token name, not payload series key.
     const backendReason =
       statusByKey?.[def.key] ?? def.series.map((k) => statusByKey?.[k]).find(Boolean);
+    // Use backend warm-up reason if available (for this timeframe)
+    const warmUpReason = warmUp?.[def.key]?.reason ?? warmUp?.[def.token]?.reason;
     let status: IndicatorStatus = { kind: "ok" };
     if (!hasAnyData) {
       if (backendReason) status = { kind: "error", reason: backendReason };
@@ -284,6 +299,7 @@ export function TechnicalChart({
         status = { kind: "error", reason: `needs ${def.minHistory} bars, window has ${data.series.dates.length}` };
       else if (keysMissing.length)
         status = { kind: "empty", reason: "not in this response (token missing server-side)" };
+      else if (warmUpReason) status = { kind: "empty", reason: warmUpReason };
       else status = { kind: "empty", reason: "no value in this window yet (warm-up)" };
     }
     return { def, latest: seriesValues.map((v) => lastNonNull(v ?? [])), status };
@@ -543,30 +559,55 @@ export function TechnicalChart({
 
     // Live in-session candle: appended only when its session date is not
     // already archived (the nightly ingest adds the real bar; no duplicates).
+    // For W/M timeframes, update the current period's bar instead of appending.
+    const appliedTf = timeframe?.applied ?? "D";
+    const isAggregated = appliedTf === "W" || appliedTf === "M";
     if (liveCandle && n > 0) {
       const lt = Math.floor(new Date(liveCandle.time).getTime() / 1000) as UTCTimestamp;
       const lastT = times[n - 1];
       const liveRef = changeRef(colorRule, liveCandle.open, prevClose);
       const liveCol = changeColor(liveCandle.close - liveRef, pal);
       if (lt > lastT) {
-        candleData.push({
-          time: lt,
-          open: liveCandle.open,
-          high: liveCandle.high,
-          low: liveCandle.low,
-          close: liveCandle.close,
-          color: liveCol,
-          borderColor: liveCol,
-          wickColor: liveCol,
-        });
-        candleSeries.setData(candleData);
-        if (liveCandle.volume > 0) {
-          volumeData.push({
+        if (!isAggregated) {
+          // Daily: append new candle
+          candleData.push({
             time: lt,
-            value: liveCandle.volume,
-            color: alpha(liveCol, 0.5),
+            open: liveCandle.open,
+            high: liveCandle.high,
+            low: liveCandle.low,
+            close: liveCandle.close,
+            color: liveCol,
+            borderColor: liveCol,
+            wickColor: liveCol,
           });
-          volumeSeries?.setData(volumeData);
+          candleSeries.setData(candleData);
+          if (liveCandle.volume > 0) {
+            volumeData.push({
+              time: lt,
+              value: liveCandle.volume,
+              color: alpha(liveCol, 0.5),
+            });
+            volumeSeries?.setData(volumeData);
+          }
+        } else {
+          // W/M: update the last (current period) bar
+          const i = candleData.length - 1;
+          if (i >= 0) {
+            const merged = {
+              ...candleData[i],
+              close: liveCandle.close,
+              high: Math.max(candleData[i].high, liveCandle.high),
+              low: Math.min(candleData[i].low, liveCandle.low),
+            };
+            const mRef = changeRef(colorRule, merged.open, i > 0 ? candleData[i - 1].close : null);
+            merged.color = merged.borderColor = merged.wickColor = changeColor(merged.close - mRef, pal);
+            candleData[i] = merged;
+            candleSeries.setData(candleData);
+            if (liveCandle.volume > 0) {
+              volumeData[i] = { ...volumeData[i], value: liveCandle.volume, color: alpha(merged.color, 0.5) };
+              volumeSeries?.setData(volumeData);
+            }
+          }
         }
       } else if (lt === lastT) {
         // Same session already archived: overlay the live close onto that bar.
@@ -984,6 +1025,27 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [basis, setBasis] = useState<"as_traded" | "adjusted">("as_traded");
+  const [tf, setTf] = useState<"auto" | "D" | "W" | "M">(() => {
+    try {
+      return (window.localStorage.getItem(`chart-tf:${symbol}`) as "auto" | "D" | "W" | "M") ?? "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  const [weekStart, setWeekStart] = useState<"sunday" | "monday">(() => {
+    try {
+      return (window.localStorage.getItem(`chart-week-start:${symbol}`) as "sunday" | "monday") ?? "monday";
+    } catch {
+      return "monday";
+    }
+  });
+  const [barLabelMode, setBarLabelMode] = useState<"last_session" | "period_start">(() => {
+    try {
+      return (window.localStorage.getItem(`chart-bar-label:${symbol}`) as "last_session" | "period_start") ?? "period_start";
+    } catch {
+      return "period_start";
+    }
+  });
   const [showVolume, setShowVolume] = useState(true);
   // Re-read when another surface (topbar, another chart) changes the rule.
   useEffect(() => {
@@ -1009,6 +1071,28 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
       /* non-fatal */
     }
   }, [range]);
+  // Persist timeframe per symbol
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`chart-tf:${symbol}`, tf);
+    } catch {
+      /* non-fatal */
+    }
+  }, [tf, symbol]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`chart-week-start:${symbol}`, weekStart);
+    } catch {
+      /* non-fatal */
+    }
+  }, [weekStart, symbol]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`chart-bar-label:${symbol}`, barLabelMode);
+    } catch {
+      /* non-fatal */
+    }
+  }, [barLabelMode, symbol]);
   useEffect(() => setChipHidden(false), [symbol, range]);
 
   const toggle = (id: IndicatorId) => {
@@ -1027,7 +1111,7 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
   const effRange = customDates ? "ALL" : range;
 
   const query = useQuery({
-    queryKey: ["chart", symbol, effRange, fromDate, toDate, basis, selected],
+    queryKey: ["chart", symbol, effRange, fromDate, toDate, basis, tf, weekStart, barLabelMode, selected],
     queryFn: ({ signal }) =>
       analytics.chart(
         symbol,
@@ -1038,6 +1122,9 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           indicators: selectedToParam(selected),
           start: fromDate || undefined,
           end: toDate || undefined,
+          tf,
+          week_start: weekStart,
+          bar_label_mode: barLabelMode,
         },
         signal,
       ),
@@ -1141,6 +1228,46 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           )}
         </div>
         <label className="tc-ctl">
+          <span>Timeframe</span>
+          <select
+            className="input"
+            value={tf}
+            onChange={(e) => setTf(e.target.value as "auto" | "D" | "W" | "M")}
+            aria-label="Bar timeframe"
+          >
+            <option value="auto">Auto</option>
+            <option value="D">Daily</option>
+            <option value="W">Weekly</option>
+            <option value="M">Monthly</option>
+          </select>
+        </label>
+        {tf === "W" && (
+          <label className="tc-ctl">
+            <span>Week start</span>
+            <select
+              className="input"
+              value={weekStart}
+              onChange={(e) => setWeekStart(e.target.value as "sunday" | "monday")}
+              aria-label="Week start day"
+            >
+              <option value="sunday">Sunday</option>
+              <option value="monday">Monday</option>
+            </select>
+          </label>
+        )}
+        <label className="tc-ctl">
+          <span>Bar label</span>
+          <select
+            className="input"
+            value={barLabelMode}
+            onChange={(e) => setBarLabelMode(e.target.value as "last_session" | "period_start")}
+            aria-label="Bar date label mode"
+          >
+            <option value="last_session">Last session</option>
+            <option value="period_start">Period start</option>
+          </select>
+        </label>
+        <label className="tc-ctl">
           <span>Prices</span>
           <select
             className="input"
@@ -1236,6 +1363,8 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
             statusByKey={data.disabled}
             showVolume={showVolume}
             marketClosed={live ? false : marketOpen === false}
+            timeframe={data.timeframe}
+            warmUp={data.warm_up}
           />
         </>
       )}
