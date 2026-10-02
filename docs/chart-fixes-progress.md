@@ -47,16 +47,16 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 
 | Item | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| E1 scripts/indicator_health.py | ⬜ todo | — | |
-| E2 Fix failing tokens | ✅ done | 5d76671 | `mfi` had no backend handler (silent dead button) → added. 8 backend tokens missing from picker → added (median_price, typical_price, price_channel, correlation_log, ratio, spread, compare, technical_ratings). |
-| E3 Registry pytest | ⬜ todo | — | |
-| E4 Frontend↔backend token smoke check | ⬜ todo | — | |
+| E1 scripts/indicator_health.py | ✅ done | f28e0d3 | Sweeps every picker token × 3 symbols (ANLB user's, NHPC liquid, BNT thin): HTTP status, series shape, null fraction, registry match. Writes `docs/indicator-health.md`; exit ≠ 0 on any broken token. |
+| E2 Fix failing tokens | ✅ done | 5d76671 + 5cceb27 + f28e0d3 | `mfi` had no backend handler (silent dead button) → added. 8 backend tokens missing from picker → added. `roc`/`vwma` imported-but-unused (NameError → 500, 5cceb27); same class for `vortex` (f28e0d3). Sweep now reports 300/300 rows healthy, 0 registry mismatches; `vol_index`/compare-family are `not_applicable` with provenance reasons (healthy by design). |
+| E3 Registry pytest | ✅ done | this commit | `backend/tests/test_chart_contract.py`: every picker token must serve data **or** return a stated reason (fail-before evidence: would have caught mfi/roc/vwma/vortex), warm-up nulls, SMA hand math, ranges 1W/YTD/custom/400, basis honesty, OHLC geometry (max high 262.0 by hand), weekday sessions, no dupes. 12 passed. |
+| E4 Frontend↔backend token smoke check | ✅ done | f28e0d3 | The sweep cross-checks picker tokens against the backend contract: 300/300 healthy, 0 mismatches. Also pinned in pytest (E3) so a future dropped handler fails CI instead of silently 500-ing. |
 
 ## F. Tests, verification, report
 
 | Item | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| F1 Parity/geometry/colour tests | 🔄 partial | this commit | Colour: `node scripts/check-color-rule.mjs` ✓ 18/18. Geometry/parity/registry pytest + parity page next. |
+| F1 Parity/geometry/colour tests | 🔄 partial | this commit | Colour: `node scripts/check-color-rule.mjs` ✓ 18/18. Backend registry/geometry/parity pytest ✓ 12/12 (this commit). Remaining: B5 parity page. |
 | F2 Full backend tests + npm build | 🔄 partial | this commit | `npx tsc -b` clean, `npm run build` ✓ (722 kB bundle). Backend test suite rerun pending with E/F items. |
 | F3 Manual verification | 🔄 partial | this commit | Done: full-range no-clip view, green-up, RSI+Median instant plot, legend, tooltip, persistence across reload, market-closed badge. Remaining: 8 overlays + 4 osc sweep, basis toggle, colour-rule flip, 1W/YTD buttons in UI. |
 | F4 Final report | ⬜ todo | — | |
