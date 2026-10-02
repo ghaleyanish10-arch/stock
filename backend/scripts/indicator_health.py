@@ -84,9 +84,10 @@ def analyse_token(
     token: str,
     expected_keys: list[str],
     payload: dict,
+    tf: str = "D",
 ) -> dict:
     """Judge one token against one response payload."""
-    out: dict = {"token": token, "ok": True, "notes": []}
+    out: dict = {"token": token, "ok": True, "notes": [], "tf": tf}
     ind = payload.get("indicators", {})
     disabled = payload.get("disabled", {})
     n_dates = len(payload.get("series", {}).get("dates", []))
@@ -145,10 +146,10 @@ def analyse_token(
     return out
 
 
-def sweep_symbol(base: str, symbol: str, tokens: list[str], defs: dict[str, list[str]], timeout: float):
+def sweep_symbol(base: str, symbol: str, tokens: list[str], defs: dict[str, list[str]], timeout: float, tf: str = "D"):
     partner = COMPARE_PARTNERS.get(symbol)
     path = (
-        f"/api/analytics/chart/{symbol}?range=ALL&indicators={','.join(tokens)}"
+        f"/api/analytics/chart/{symbol}?range=ALL&tf={tf}&indicators={','.join(tokens)}"
         + (f"&compare={partner}" if partner else "")
     )
     elapsed, payload = fetch_json(base, path, timeout)
@@ -159,9 +160,9 @@ def sweep_symbol(base: str, symbol: str, tokens: list[str], defs: dict[str, list
         detail = (payload or {}).get("_error") or (payload or {}).get("detail") or "non-200"
         rows.append({"symbol": symbol, "token": "<ALL>", "status": f"HTTP {status}: {detail}", "ok": False,
                      "notes": ["combined request failed"], "series": 0, "nonnull": 0,
-                     "first_valid": None, "flags": ["combined-failure"], "elapsed": elapsed})
+                     "first_valid": None, "flags": ["combined-failure"], "elapsed": elapsed, "tf": tf})
         for t in tokens:
-            iso = f"/api/analytics/chart/{symbol}?range=ALL&indicators={t}"
+            iso = f"/api/analytics/chart/{symbol}?range=ALL&tf={tf}&indicators={t}"
             if partner:
                 iso += f"&compare={partner}"
             e1, p1 = fetch_json(base, iso, timeout)
@@ -170,15 +171,15 @@ def sweep_symbol(base: str, symbol: str, tokens: list[str], defs: dict[str, list
                 rows.append({"symbol": symbol, "token": t, "status": f"HTTP {s1}", "ok": False,
                              "notes": [str((p1 or {}).get("detail") or (p1 or {}).get("_error") or "")],
                              "series": 0, "nonnull": 0, "first_valid": None,
-                             "flags": ["http-error"], "elapsed": e1})
+                             "flags": ["http-error"], "elapsed": e1, "tf": tf})
                 continue
-            r = analyse_token(t, defs.get(t, []), p1)
-            r.update(symbol=symbol, elapsed=e1)
+            r = analyse_token(t, defs.get(t, []), p1, tf)
+            r.update(symbol=symbol, elapsed=e1, tf=tf)
             rows.append(r)
         return rows, elapsed
 
     for t in tokens:
-        r = analyse_token(t, defs.get(t, []), payload)
+        r = analyse_token(t, defs.get(t, []), payload, tf)
         r.update(symbol=symbol, elapsed=None)
         rows.append(r)
     return rows, elapsed
@@ -188,19 +189,23 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--symbols", default="ANLB,NHPC,BNT")
+    ap.add_argument("--timeframes", default="D,W,M", help="Comma-separated timeframes: D,W,M")
     ap.add_argument("--timeout", type=float, default=60.0)
     args = ap.parse_args()
 
+    timeframes = [tf.strip().upper() for tf in args.timeframes.split(",") if tf.strip()]
     tokens, defs = load_frontend_registry()
     be = backend_tokens()
     print(f"frontend registry: {len(tokens)} tokens; backend handlers found: {len(be)}")
+    print(f"timeframes: {timeframes}")
 
     all_rows: list[dict] = []
     for symbol in [s.strip().upper() for s in args.symbols.split(",") if s.strip()]:
-        rows, elapsed = sweep_symbol(args.base, symbol, tokens, defs, args.timeout)
-        print(f"{symbol}: {len(rows)} tokens in {elapsed:.2f}s, "
-              f"{sum(1 for r in rows if not r['ok'])} not ok")
-        all_rows.extend(rows)
+        for tf in timeframes:
+            rows, elapsed = sweep_symbol(args.base, symbol, tokens, defs, args.timeout, tf)
+            print(f"{symbol} {tf}: {len(rows)} tokens in {elapsed:.2f}s, "
+                  f"{sum(1 for r in rows if not r['ok'])} not ok")
+            all_rows.extend(rows)
 
     # Registry cross-check: frontend token without a backend handler is a
     # silent dead button (this is exactly how `mfi` broke).
@@ -223,20 +228,21 @@ def main() -> int:
         "",
     ]
     for symbol in [s.strip().upper() for s in args.symbols.split(",") if s.strip()]:
-        lines += [
-            f"## {symbol}",
-            "",
-            "| token | status | series | non-null | first valid idx | flags | notes |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
-        ]
-        for r in [x for x in all_rows if x["symbol"] == symbol]:
-            notes = "; ".join(r.get("notes", []))
-            lines.append(
-                f"| {r['token']} | {r['status']} | {r.get('series', '')} "
-                f"| {r.get('nonnull', '')} | {r.get('first_valid', '') if r.get('first_valid') is not None else ''} "
-                f"| {','.join(r.get('flags', []))} | {notes} |"
-            )
-        lines.append("")
+        for tf in timeframes:
+            lines += [
+                f"## {symbol} ({tf})",
+                "",
+                "| token | status | series | non-null | first valid idx | flags | notes |",
+                "| --- | --- | --- | --- | --- | --- | --- |",
+            ]
+            for r in [x for x in all_rows if x["symbol"] == symbol and x.get("tf") == tf]:
+                notes = "; ".join(r.get("notes", []))
+                lines.append(
+                    f"| {r['token']} | {r['status']} | {r.get('series', '')} "
+                    f"| {r.get('nonnull', '')} | {r.get('first_valid', '') if r.get('first_valid') is not None else ''} "
+                    f"| {','.join(r.get('flags', []))} | {notes} |"
+                )
+            lines.append("")
     if mismatches:
         lines += [
             "## Registry mismatches",
@@ -250,7 +256,7 @@ def main() -> int:
     lines += [
         "## Verdict",
         "",
-        f"- tokens swept: {len(tokens)} x {len(args.symbols.split(','))} symbols",
+        f"- tokens swept: {len(tokens)} x {len(args.symbols.split(','))} symbols x {len(timeframes)} timeframes",
         f"- broken rows (no data without a reason): {len(broken)}",
         f"- frontend tokens missing a backend handler: {len(mismatches)}",
         "",
