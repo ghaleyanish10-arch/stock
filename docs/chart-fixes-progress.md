@@ -21,7 +21,7 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 | B2 Data defects | ✅ none found | — | A2 clean; no repairs needed. |
 | B3 Default 3M, full view, no clipping | ✅ done | 5d76671 | `fitContent()` on load; candles-only autoscale (overlays use `autoscaleInfoProvider:()=>null`); default range 3M. Verified live: axis 4,800–7,560 with zero clipping. |
 | B4 Rendering parity (body/wick, ordinal x, ranges, From/To, volume pane, tooltip) | ✅ done | 5d76671 | Trading-day x-axis (lightweight-charts is ordinal); RANGES 1W…ALL + custom dates; volume pane same-rule-coloured, hideable; OHLCV tooltip with change % and rule-based colour. |
-| B5 Parity helper page | ✅ done | (parity-page commit; hash filled below) | `/dev/chart-parity?symbol=ANLB&range=3M`: renders the exact payload the chart shows as a table, plus a paste-box for NEPSE's daily table with per-row diff (green match / red mismatch with NEPSE−ours delta / grey missing). Parser tolerates commas, pipes, dd/mm/yyyy. |
+| B5 Parity helper page | ✅ done | ddfb3c9 | `/dev/chart-parity?symbol=ANLB&range=3M`: renders the exact payload the chart shows as a table, plus a paste-box for NEPSE's daily table with per-row diff (green match / red mismatch with NEPSE−ours delta / grey missing). Parser tolerates commas, pipes, dd/mm/yyyy. Live-verified: exact rows match (green), a hand-wrong close flags MISMATCH with delta −5.00, out-of-window rows flagged, header lines ignored. |
 | B6 Acceptance vs NEPSE table | ⏳ blocked on user | — | Values match the page the user quoted (close 4,919.70 / O 4,935 / H 4,935 / L 4,821). |
 | B7 Live-merge phantom bar | ✅ done | this commit | Found via B5: `_live_bar` re-dated the poller's stale quote to "today", painting a phantom 2026-10-02 bar (a Friday) duplicating the 10-01 session (O 4,934.80, V 945) that NEPSE's own chart lacks. Fix: live merge only when NEPSE reports the market OPEN (same gate the card's header uses); status unreadable ⇒ no live bar. Verified: `dates[-1]` 2026-10-02 → 2026-10-01, `live.market_open: false` + honest note. Pinned by 3 new contract tests. |
 
@@ -50,17 +50,17 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 | --- | --- | --- | --- |
 | E1 scripts/indicator_health.py | ✅ done | f28e0d3 | Sweeps every picker token × 3 symbols (ANLB user's, NHPC liquid, BNT thin): HTTP status, series shape, null fraction, registry match. Writes `docs/indicator-health.md`; exit ≠ 0 on any broken token. |
 | E2 Fix failing tokens | ✅ done | 5d76671 + 5cceb27 + f28e0d3 | `mfi` had no backend handler (silent dead button) → added. 8 backend tokens missing from picker → added. `roc`/`vwma` imported-but-unused (NameError → 500, 5cceb27); same class for `vortex` (f28e0d3). Sweep now reports 300/300 rows healthy, 0 registry mismatches; `vol_index`/compare-family are `not_applicable` with provenance reasons (healthy by design). |
-| E3 Registry pytest | ✅ done | this commit | `backend/tests/test_chart_contract.py`: every picker token must serve data **or** return a stated reason (fail-before evidence: would have caught mfi/roc/vwma/vortex), warm-up nulls, SMA hand math, ranges 1W/YTD/custom/400, basis honesty, OHLC geometry (max high 262.0 by hand), weekday sessions, no dupes. 12 passed. |
+| E3 Registry pytest | ✅ done | a1447c4 | `backend/tests/test_chart_contract.py`: every picker token must serve data **or** return a stated reason (fail-before evidence: would have caught mfi/roc/vwma/vortex), warm-up nulls, SMA hand math, ranges 1W/YTD/custom/400, basis honesty, OHLC geometry (max high 262.0 by hand), weekday sessions, no dupes. 12 passed. |
 | E4 Frontend↔backend token smoke check | ✅ done | f28e0d3 | The sweep cross-checks picker tokens against the backend contract: 300/300 healthy, 0 mismatches. Also pinned in pytest (E3) so a future dropped handler fails CI instead of silently 500-ing. |
 
 ## F. Tests, verification, report
 
 | Item | Status | Commit | Notes |
 | --- | --- | --- | --- |
-| F1 Parity/geometry/colour tests | 🔄 partial | this commit | Colour: `node scripts/check-color-rule.mjs` ✓ 18/18. Backend registry/geometry/parity pytest ✓ 12/12 (this commit). Remaining: B5 parity page. |
-| F2 Full backend tests + npm build | 🔄 partial | this commit | `npx tsc -b` clean, `npm run build` ✓ (722 kB bundle). Backend test suite rerun pending with E/F items. |
-| F3 Manual verification | 🔄 partial | this commit | Done: full-range no-clip view, green-up, RSI+Median instant plot, legend, tooltip, persistence across reload, market-closed badge. Remaining: 8 overlays + 4 osc sweep, basis toggle, colour-rule flip, 1W/YTD buttons in UI. |
-| F4 Final report | ⬜ todo | — | |
+| F1 Parity/geometry/colour tests | ✅ done | fd7f167 + a1447c4 + d66646d | Colour: `node scripts/check-color-rule.mjs` ✓ 18/18 (gap-day disagreements both directions). Backend: contract pytest 15/15 after the live-gate tests (d66646d). Parity page live-verified against the real payload (B5). |
+| F2 Full backend tests + npm build | ✅ done | this commit | Full suite: **756 passed, 8 skipped** (baseline before this branch's chart work: 717 passed, 8 skipped; +39). One transient network-flaky live-NEPSE test (test_brokers_registry_only) failed once and passed on re-run and in isolation — unrelated to chart changes. `npx tsc -b` clean, `npm run build` ✓, colour-rule script ✓. |
+| F3 Manual verification | ✅ done | — | Verified live in the browser: full-range no-clip view; 1W = 5 sessions and YTD = 176 sessions (matches API); basis=adjusted shows the honest no-op reason; colour-rule flip persists (`chart-color-rule`) and rebuilds the chart; 12-indicator sweep (SMA/EMA/BB/PSAR/Supertrend/Ichimoku/RSI/MACD/TRIX/MFI/Stochastic/Median) plots instantly with legend values; cap notice at 12; series enumeration proves every overlay is autoscale-gated (only candles autoscale — supertrend max 7,914 does not stretch the axis); market-closed badge; console clean. |
+| F4 Final report | ✅ done | — | See the chat report: A–F table with commit hashes, before/after numbers, and the two open questions (NEPSE daily table; NEPSE colour rule on gap days). |
 
 ## Open questions for the user
 
