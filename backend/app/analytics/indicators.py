@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable, Optional, Sequence
 
 #: A single OHLCV bar. Field names match NEPSE's `today-price` payload.
@@ -4218,3 +4219,89 @@ def technical_ratings(
         "component_table": ma_components + osc_components,
         "label": label,
     }
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for timeframe aggregation (used by chart endpoint)
+# ---------------------------------------------------------------------------
+
+
+def _nepse_week_sunday(d: date) -> date:
+    """The Sunday that starts the NEPSE trading week containing d.
+
+    NEPSE trades Sunday-Thursday, so the week bucket is the most recent Sunday:
+    weekday() is Mon=0..Sun=6, and (weekday + 1) % 7 maps Sun->0, Mon->1 ..
+    Thu->4 days back to that week's Sunday.
+    """
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def _aggregate_ohlcv(
+    dates: list[str],
+    opens: list[Optional[float]],
+    highs: list[Optional[float]],
+    lows: list[Optional[float]],
+    closes: list[Optional[float]],
+    volumes: list[Optional[float]],
+    timeframe: str,
+) -> tuple[
+    list[str],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+]:
+    """Collapse daily bars into weekly or monthly bars (B: timeframe selector).
+
+    Weekly = the NEPSE trading week, Sunday through Thursday; a session joins
+    the bucket of the Sunday that starts its week (the archive holds no
+    Friday/Saturday sessions, asserted by the contract tests). Monthly = the
+    calendar month.
+
+    Bar label: the period's LAST session date, so the running (incomplete)
+    week carries the day its close was actually observed on and lines up with
+    the latest daily session.
+
+    Aggregation: open = first open, high = max high, low = min low,
+    close = last close, volume = sum of the non-null dailies (None only when
+    every daily volume is null - a missing value is never turned into a zero).
+    """
+    from datetime import date, timedelta
+
+    buckets: dict[str, list[int]] = {}
+    for i, ds in enumerate(dates):
+        d = date.fromisoformat(ds)
+        key = _nepse_week_sunday(d).isoformat() if timeframe == "W" else ds[:7]  # YYYY-MM
+        buckets.setdefault(key, []).append(i)
+
+    out_dates: list[str] = []
+    out_o: list[Optional[float]] = []
+    out_h: list[Optional[float]] = []
+    out_l: list[Optional[float]] = []
+    out_c: list[Optional[float]] = []
+    out_v: list[Optional[float]] = []
+
+    for idxs in buckets.values():
+        i0, i1 = idxs[0], idxs[-1]
+        h_present = [highs[i] for i in idxs if highs[i] is not None]
+        l_present = [lows[i] for i in idxs if lows[i] is not None]
+        v_present = [volumes[i] for i in idxs if volumes[i] is not None]
+        out_dates.append(dates[i1])
+        out_o.append(opens[i0])
+        out_h.append(max(h_present) if h_present else None)
+        out_l.append(min(l_present) if l_present else None)
+        out_c.append(closes[i1])
+        out_v.append(sum(v_present) if v_present else None)
+
+    return out_dates, out_o, out_h, out_l, out_c, out_v
+
+
+def _nepse_week_sunday(d: date) -> date:
+    """The Sunday that starts the NEPSE trading week containing d.
+
+    NEPSE trades Sunday-Thursday, so the week bucket is the most recent Sunday:
+    weekday() is Mon=0..Sun=6, and (weekday + 1) % 7 maps Sun->0, Mon->1 ..
+    Thu->4 days back to that week's Sunday.
+    """
+    return d - timedelta(days=(d.weekday() + 1) % 7)

@@ -262,6 +262,7 @@ TF_ORDER = ("D", "W", "M")
 #: one per trading week (user report for AHL), so quarters and years collapse
 #: to weeks and the whole history to months. The 1m/6m/1y/All counts are an
 #: open question with the user; adjust here when they answer.
+#: UNVERIFIED: 1m/6m/1y/All counts not confirmed with NEPSE; marked spec_status=unverified.
 AUTO_TF_BY_RANGE = {
     "1W": "D",
     "1M": "D",
@@ -269,7 +270,7 @@ AUTO_TF_BY_RANGE = {
     "6M": "W",
     "YTD": "W",
     "1Y": "W",
-    "ALL": "M",
+    "ALL": "W",
 }
 
 #: Custom windows collapse by calendar span (days).
@@ -1207,6 +1208,7 @@ async def chart(
             "applied": applied_tf,
             "auto": tf == "auto",
             "auto_rule": AUTO_TF_BY_RANGE if tf == "auto" else None,
+            "spec_status": "unverified",
             "note": (
                 "Daily bars."
                 if applied_tf == "D"
