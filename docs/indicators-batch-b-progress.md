@@ -68,7 +68,7 @@
 | 54 | Typical Price | Price | ✅ Done | 443a11b | 2 | |
 | 55 | Price Channel | Price | ✅ Done | 443a11b | 3 | |
 | 56 | Elder's Force Index | Specialized | ✅ Done | 443a11b | 4 | |
-| 57 | Technical Ratings | Specialized | ⏳ Not Started | - | - | |
+| 57 | Technical Ratings | Specialized | ✅ Done | ea1eee7 | 4 | |
 
 ---
 

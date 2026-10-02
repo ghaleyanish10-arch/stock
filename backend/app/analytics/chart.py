@@ -254,6 +254,107 @@ def _range_complete(dates: list[str], latest: str, days: int) -> bool:
     return dates[0] < want
 
 
+# -- timeframe aggregation (D / W / M) ---------------------------------------
+
+TF_ORDER = ("D", "W", "M")
+
+#: Auto ("NEPSE-style") mapping. Observed: NEPSE's 3M view draws ~13 candles,
+#: one per trading week (user report for AHL), so quarters and years collapse
+#: to weeks and the whole history to months. The 1m/6m/1y/All counts are an
+#: open question with the user; adjust here when they answer.
+AUTO_TF_BY_RANGE = {
+    "1W": "D",
+    "1M": "D",
+    "3M": "W",
+    "6M": "W",
+    "YTD": "W",
+    "1Y": "W",
+    "ALL": "M",
+}
+
+#: Custom windows collapse by calendar span (days).
+AUTO_TF_BY_DAYS = ((120, "D"), (550, "W"))
+
+
+def _auto_timeframe(range_requested: str, days: Optional[int]) -> str:
+    """Which bar size the Auto mode picks for a range (or custom span)."""
+    if range_requested != "custom":
+        return AUTO_TF_BY_RANGE.get(range_requested, "D")
+    if days is None:
+        return "D"
+    for limit, tf in AUTO_TF_BY_DAYS:
+        if days <= limit:
+            return tf
+    return "M"
+
+
+def _nepse_week_sunday(d: date) -> date:
+    """The Sunday that starts the NEPSE trading week containing d.
+
+    NEPSE trades Sunday-Thursday, so the week bucket is the most recent Sunday:
+    weekday() is Mon=0..Sun=6, and (weekday + 1) % 7 maps Sun->0, Mon->1 ..
+    Thu->4 days back to that week's Sunday.
+    """
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def _aggregate_ohlcv(
+    dates: list[str],
+    opens: list[Optional[float]],
+    highs: list[Optional[float]],
+    lows: list[Optional[float]],
+    closes: list[Optional[float]],
+    volumes: list[Optional[float]],
+    timeframe: str,
+) -> tuple[
+    list[str],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+    list[Optional[float]],
+]:
+    """Collapse daily bars into weekly or monthly bars (B: timeframe selector).
+
+    Weekly = the NEPSE trading week, Sunday through Thursday; a session joins
+    the bucket of the Sunday that starts its week (the archive holds no
+    Friday/Saturday sessions, asserted by the contract tests). Monthly = the
+    calendar month.
+
+    Bar label: the period's LAST session date, so the running (incomplete)
+    week carries the day its close was actually observed on and lines up with
+    the latest daily session.
+
+    Aggregation: open = first open, high = max high, low = min low,
+    close = last close, volume = sum of the non-null dailies (None only when
+    every daily volume is null - a missing value is never turned into a zero).
+    """
+    buckets: dict[str, list[int]] = {}
+    for i, ds in enumerate(dates):
+        d = date.fromisoformat(ds)
+        key = _nepse_week_sunday(d).isoformat() if timeframe == "W" else ds[:7]  # YYYY-MM
+        buckets.setdefault(key, []).append(i)
+
+    out_dates: list[str] = []
+    out_o: list[Optional[float]] = []
+    out_h: list[Optional[float]] = []
+    out_l: list[Optional[float]] = []
+    out_c: list[Optional[float]] = []
+    out_v: list[Optional[float]] = []
+    for idxs in buckets.values():
+        i0, i1 = idxs[0], idxs[-1]
+        h_present = [highs[i] for i in idxs if highs[i] is not None]
+        l_present = [lows[i] for i in idxs if lows[i] is not None]
+        v_present = [volumes[i] for i in idxs if volumes[i] is not None]
+        out_dates.append(dates[i1])
+        out_o.append(opens[i0])
+        out_h.append(max(h_present) if h_present else None)
+        out_l.append(min(l_present) if l_present else None)
+        out_c.append(closes[i1])
+        out_v.append(sum(v_present) if v_present else None)
+    return out_dates, out_o, out_h, out_l, out_c, out_v
+
+
 @router.get("/chart/{symbol}", summary="Candles, indicators and panel data")
 async def chart(
     symbol: str,
@@ -273,6 +374,11 @@ async def chart(
     basis: str = Query("as_traded", description="as_traded | adjusted"),
     start: Optional[str] = Query(None, description="Custom window start (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Custom window end (YYYY-MM-DD)"),
+    tf: str = Query(
+        "auto",
+        alias="tf",
+        description="Bar timeframe: D | W | M | auto (NEPSE-style per range)",
+    ),
 ) -> dict[str, Any]:
     """Everything the chart renders, in one response.
 
@@ -288,6 +394,8 @@ async def chart(
         raise HTTPException(400, "mode must be ADJUSTED or UNADJUSTED.")
     if basis not in ("as_traded", "adjusted"):
         raise HTTPException(400, "basis must be as_traded or adjusted.")
+    if tf not in ("D", "W", "M", "auto"):
+        raise HTTPException(400, "tf must be one of D, W, M, auto.")
     try:
         start_d = date.fromisoformat(start) if start else None
         end_d = date.fromisoformat(end) if end else None
@@ -398,11 +506,38 @@ async def chart(
             volumes[i] = float(q_vol) if q_vol else volumes[i]
             live_mode = "overlay"
 
+    # -- timeframe resolution + aggregation ----------------------------------
+    # "auto" picks the bar size NEPSE-style for the requested range (weekly for
+    # a 3M view, etc.). The DAILY series is kept for the right-hand panel -
+    # day change, 52-week range and the performance grid are daily facts even
+    # when the chart draws weekly bars. The live bar (only while NEPSE reports
+    # the market open) joins its week/month like any other session.
+    custom_window = start_d is not None or end_d is not None
+    if custom_window:
+        eff_s = start_d or date.fromisoformat(dates[0])
+        eff_e = end_d or date.fromisoformat(dates[-1])
+        auto_tf = _auto_timeframe("custom", (eff_e - eff_s).days)
+    else:
+        auto_tf = _auto_timeframe(range_key, None)
+    applied_tf = tf if tf != "auto" else auto_tf
+
+    daily_dates, daily_opens = dates, opens
+    daily_highs, daily_lows = highs, lows
+    daily_closes, daily_volumes = closes, volumes
+    if applied_tf != "D":
+        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+            dates, opens, highs, lows, closes, volumes, applied_tf
+        )
+
     # -- window selection ----------------------------------------------------
     # A custom start/end (the card's date pickers) overrides the range
-    # shortcuts. Either way the window is a slice of the archived+live series;
-    # indicators are computed on the slice so their warm-up nulls stay honest
-    # (missing is not zero).
+    # shortcuts. Either way the window is a slice of the (possibly aggregated)
+    # series. Indicators are NOT computed on the slice: they run on the full
+    # history through the window's last bar and are sliced afterwards, so a
+    # 20-bar lookback is already warm at the window's left edge and SMA 20
+    # starts at the first candle like NEPSE's own chart. A value the archive
+    # genuinely cannot produce yet stays null and is reported with a reason -
+    # missing is not zero.
     if start_d is not None or end_d is not None:
         eff_start = (start_d or date.fromisoformat(dates[0])).isoformat()
         eff_end = (end_d or date.fromisoformat(latest)).isoformat()
@@ -445,10 +580,10 @@ async def chart(
     # archive starts on or before the requested start date.
     if range_requested == "custom":
         want = None
-        complete = dates[0] <= eff_start
+        complete = daily_dates[0] <= eff_start
     else:
         want = _want_date(window_last, range_requested)
-        complete = dates[0] < want
+        complete = daily_dates[0] < want
     days_available = (date.fromisoformat(window_last) - date.fromisoformat(first_shown)).days
     range_available = first_shown <= window_last
 
@@ -463,19 +598,35 @@ async def chart(
 
     from app.analytics.indicators import Bar
 
+    # -- indicators: compute on FULL history, then slice to the window -------
+    # The old code computed on the window slice, so every lookback restarted
+    # inside the view: SMA 20 / EMA 20 / WMA 20 / MA crosses began ~20 candles
+    # after the left edge (user report on AHL). Computing on the full series
+    # through the window's last bar and slicing afterwards puts the first value
+    # on the first candle whenever the archive is warm enough - which is what
+    # NEPSE's own chart shows. Whole-lookback indicators (Fibonacci,
+    # volume profile, zigzag) measure the full series through the window end.
+    compute_end = end_idx + 1
+    compute_dates = dates[:compute_end]
+    compute_opens = opens[:compute_end]
+    compute_highs = highs[:compute_end]
+    compute_lows = lows[:compute_end]
+    compute_closes = closes[:compute_end]
+    compute_volumes = volumes[:compute_end]
     bars = [
         Bar(date=d, open=o, high=h, low=l, close=c, volume=v)
         for d, o, h, l, c, v in zip(
-            window["dates"], window["open"], window["high"],
-            window["low"], window["close"], window["volume"],
+            compute_dates, compute_opens, compute_highs,
+            compute_lows, compute_closes, compute_volumes,
         )
     ]
 
     # -- indicators --------------------------------------------------------
     wanted = {k.strip() for k in indicators.split(",") if k.strip()} - {"none", ""}
     out_indicators: dict[str, list[Optional[float]]] = {}
-    w_closes = window["close"]
-    dates_w = window["dates"]
+    # Compute-series aliases (full history through the window's last bar).
+    w_closes = compute_closes
+    dates_w = compute_dates
     if "sma_20" in wanted:
         out_indicators["sma_20"] = sma_on_valid(w_closes, 20)
     if "ema_20" in wanted:
@@ -595,7 +746,7 @@ async def chart(
     if "chaikin_osc" in wanted:
         out_indicators["chaikin_osc"] = chaikin_oscillator(bars, 3, 10)
     if "vwma" in wanted:
-        out_indicators["vwma_20"] = vwma(w_closes, window["volume"], 20)
+        out_indicators["vwma_20"] = vwma(w_closes, compute_volumes, 20)
     if "cvd" in wanted:
         out_indicators["cvd"] = cumulative_volume_delta(bars)
     if "pivots" in wanted:
@@ -893,16 +1044,42 @@ async def chart(
         out_indicators["tech_ma_rating"] = _tr_series(tr["ma_rating"])
         out_indicators["tech_osc_rating"] = _tr_series(tr["osc_rating"])
 
+    # -- warm-up report, then slice to the window ----------------------------
+    # Every series above is index-aligned with compute_dates. A requested token
+    # with no value ANYWHERE means the archive is shorter than the lookback:
+    # report the reason instead of a fabricated zero, then slice to the window
+    # so the payload aligns with series.dates.
+    warm_up: dict[str, dict[str, Optional[str]]] = {}
+    for key, series_ in out_indicators.items():
+        if isinstance(series_, list) and series_ and not any(v is not None for v in series_):
+            warm_up[key] = {
+                "first_available": None,
+                "reason": (
+                    f"the archive for {sym} ({len(daily_dates)} daily sessions"
+                    + (
+                        ""
+                        if applied_tf == "D"
+                        else f" = {len(dates)} {applied_tf} bars"
+                    )
+                    + ") is shorter than this indicator's lookback, so it has no "
+                    "value on any bar; missing is reported, never zero"
+                ),
+            }
+    out_indicators = {
+        key: (series_[start_idx:] if isinstance(series_, list) else series_)
+        for key, series_ in out_indicators.items()
+    }
+
     # -- right-hand panel --------------------------------------------------
     def _change_over(days: int) -> Optional[float]:
         cutoff = (date.fromisoformat(latest) - timedelta(days=days)).isoformat()
-        idx = next((i for i, d in enumerate(dates) if d >= cutoff), None)
+        idx = next((i for i, d in enumerate(daily_dates) if d >= cutoff), None)
         if idx is None:
             idx = 0
         if idx == 0:
             return None  # nothing before the window to measure from
-        base = closes[idx]
-        last = next((c for c in reversed(closes) if c is not None), None)
+        base = daily_closes[idx]
+        last = next((c for c in reversed(daily_closes) if c is not None), None)
         if base is None or last is None or base == 0:
             return None
         return (last - base) / base * 100.0
@@ -912,7 +1089,7 @@ async def chart(
     # would compare a bar against itself and report a change of 0.00 - which
     # reads as "flat" when the real answer is "not published yet".
     last_closed = next(
-        (i for i in range(len(closes) - 1, -1, -1) if closes[i] is not None), None
+        (i for i in range(len(daily_closes) - 1, -1, -1) if daily_closes[i] is not None), None
     )
     if last_closed is None:
         day_block: dict[str, Any] = {
@@ -921,37 +1098,41 @@ async def chart(
         }
     else:
         prior = next(
-            (closes[i] for i in range(last_closed - 1, -1, -1) if closes[i] is not None),
+            (
+                daily_closes[i]
+                for i in range(last_closed - 1, -1, -1)
+                if daily_closes[i] is not None
+            ),
             None,
         )
         day_block = {
-            "as_of": dates[last_closed],
-            "open": opens[last_closed],
-            "high": highs[last_closed],
-            "low": lows[last_closed],
-            "ltp": closes[last_closed],
+            "as_of": daily_dates[last_closed],
+            "open": daily_opens[last_closed],
+            "high": daily_highs[last_closed],
+            "low": daily_lows[last_closed],
+            "ltp": daily_closes[last_closed],
             "prev_close": prior,
             "change": (
-                closes[last_closed] - prior
-                if prior is not None and closes[last_closed] is not None
+                daily_closes[last_closed] - prior
+                if prior is not None and daily_closes[last_closed] is not None
                 else None
             ),
             "change_pct": (
-                (closes[last_closed] - prior) / prior * 100.0
-                if prior not in (None, 0) and closes[last_closed] is not None
+                (daily_closes[last_closed] - prior) / prior * 100.0
+                if prior not in (None, 0) and daily_closes[last_closed] is not None
                 else None
             ),
         }
-        if dates[-1] > dates[last_closed]:
+        if daily_dates[-1] > daily_dates[last_closed]:
             day_block["incomplete_note"] = (
-                f"{dates[-1]} is archived but has no published close yet, so the "
-                f"day panel shows the last complete session ({dates[last_closed]})."
+                f"{daily_dates[-1]} is archived but has no published close yet, so the "
+                f"day panel shows the last complete session ({daily_dates[last_closed]})."
             )
 
     year_ago = (date.fromisoformat(latest) - timedelta(days=366)).isoformat()
-    y_idx = next((i for i, d in enumerate(dates) if d >= year_ago), None)
-    highs_52 = [h for h in (highs[y_idx:] if y_idx is not None else []) if h is not None]
-    lows_52 = [l for l in (lows[y_idx:] if y_idx is not None else []) if l is not None]
+    y_idx = next((i for i, d in enumerate(daily_dates) if d >= year_ago), None)
+    highs_52 = [h for h in (daily_highs[y_idx:] if y_idx is not None else []) if h is not None]
+    lows_52 = [l for l in (daily_lows[y_idx:] if y_idx is not None else []) if l is not None]
 
     return {
         "symbol": sym,
@@ -994,16 +1175,16 @@ async def chart(
             "reason": (
                 None
                 if complete
-                else f"Archive starts {dates[0]}, inside the {range_requested} window, so this "
+                else f"Archive starts {daily_dates[0]}, inside the {range_requested} window, so this "
                 f"period is only covered from {first_shown}."
             ),
             "options": [
                 {
                     "value": key,
                     "available": True,
-                    "complete": dates[0] < _want_date(latest, key),
+                    "complete": daily_dates[0] < _want_date(latest, key),
                     "first_shown": next(
-                        (d for d in dates if d >= _want_date(latest, key)), dates[0]
+                        (d for d in daily_dates if d >= _want_date(latest, key)), daily_dates[0]
                     ),
                 }
                 for key in RANGE_ORDER
@@ -1021,6 +1202,23 @@ async def chart(
                 "basis is a no-op rather than a silent fabrication."
             ),
         },
+        "timeframe": {
+            "requested": tf,
+            "applied": applied_tf,
+            "auto": tf == "auto",
+            "auto_rule": AUTO_TF_BY_RANGE if tf == "auto" else None,
+            "note": (
+                "Daily bars."
+                if applied_tf == "D"
+                else "NEPSE trading week Sunday-Thursday; each bar is labelled with "
+                "the week's last session, open/high/low/close/volume aggregate the "
+                "week's dailies."
+                if applied_tf == "W"
+                else "Calendar months; each bar is labelled with the month's last "
+                "session and aggregates that month's dailies."
+            ),
+        },
+        "warm_up": warm_up,
         "panel": {
             "day": day_block,
             "week_52": {

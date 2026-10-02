@@ -143,7 +143,14 @@ def test_every_frontend_token_serves_or_has_reason(client):
             vals = [v for v in series if v is not None]
             if not vals and (token, key) in shape_sensitive:
                 continue
-            assert vals, f"{token}/{key}: all null (warm-up must be partial, not empty)"
+            # All-null is allowed ONLY with a warm_up reason (e.g. an ALL view
+            # auto-collapses to monthly bars, and the fixture's ~14 months give
+            # SMA-20 just 14 bars - shorter than the lookback). Without a
+            # reason, an all-null series is a silent dead token.
+            if not vals:
+                reason = (body.get("warm_up") or {}).get(key, {}).get("reason")
+                assert reason, f"{token}/{key}: all null without a warm_up reason"
+                continue
             assert not any(isinstance(v, float) and math.isnan(v) for v in vals), (
                 f"{token}/{key}: NaN leaked into the payload"
             )
@@ -176,9 +183,13 @@ def test_vol_index_disabled_by_design(client):
 
 
 def test_sma_warmup_is_none_and_first_value_matches_hand_math(client):
-    body = _chart(client, "sma_20")
+    body = _chart(client, "sma_20", tf="D")
     sma = body["indicators"]["sma_20"]
     closes = body["series"]["close"]
+    # Compute-on-full-history contract: the endpoint computes on the WHOLE
+    # archive through the window's last bar, then slices. ALL/D on this fixture
+    # shows everything, so the warm-up region is the fixture's own (bar 19 is
+    # the 20th close) - not a lookback restarted at the window's left edge.
     # Hand math: close_i = 100 + i, so SMA20 at bar 19 = mean(100..119) = 109.5.
     assert sma[18] is None, "bar 18 has only 19 closes: must be None"
     assert sma[19] == pytest.approx(sum(100 + i for i in range(20)) / 20), (
