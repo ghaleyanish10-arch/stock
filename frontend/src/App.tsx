@@ -31,6 +31,7 @@ import { NewsPage } from "./pages/NewsPage";
 import { QuarterlyPage } from "./pages/QuarterlyPage";
 import { AIPage } from "./pages/AIPage";
 import { AdminFeeTaxRatesPage } from "./pages/AdminFeeTaxRatesPage";
+import { ChartParityPage } from "./pages/ChartParityPage";
 import { useTheme } from "./theme";
 
 const queryClient = new QueryClient({
@@ -81,6 +82,8 @@ export default function App() {
               <Route path="/ai" element={<AIPage />} />
               {/* Admin */}
               <Route path="/admin/fee-tax-rates" element={<AdminFeeTaxRatesPage />} />
+              {/* Dev: paste NEPSE's daily table and diff it against our chart payload. */}
+              <Route path="/dev/chart-parity" element={<ChartParityPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </AppShell>

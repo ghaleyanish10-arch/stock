@@ -2176,3 +2176,55 @@ code {
 .trend-dot-up-red {
   background: #c62828;
 }
+
+/* -- /dev/chart-parity ---------------------------------------------------- */
+
+.parity-paste {
+  width: 100%;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+}
+
+.parity-summary {
+  margin: var(--space-3) 0;
+  font-size: var(--text-sm);
+}
+
+.parity-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.parity-table td,
+.parity-table th {
+  white-space: nowrap;
+}
+
+/* Diff verdicts reuse the up/down palette so the parity page answers to the
+ * same trend-palette switch as the chart itself. */
+.parity-table .p-ok {
+  color: var(--up);
+}
+
+.parity-table .p-bad {
+  color: var(--down);
+  font-weight: var(--weight-semibold);
+}
+
+.parity-table .p-miss {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.p-delta {
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+
+.parity-meta {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
