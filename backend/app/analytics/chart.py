@@ -144,11 +144,12 @@ from app.archive.service import ArchiveService
 from app.auth.deps import DbSession
 from app.db.models import DailyBar, Security
 from app.nepse.registry import get_adapter
-from app.nepse.service import validate_symbol
+from app.nepse.service import NepseService, validate_symbol
 
 router = APIRouter(prefix="/api/analytics", tags=["chart"])
 
 _archive = ArchiveService(get_adapter())
+_nepse = NepseService(get_adapter())
 
 #: Calendar look-backs offered as range shortcuts. Availability depends on how
 #: far back the local archive reaches, which is reported per range.
@@ -184,7 +185,11 @@ PERFORMANCE_GRID: list[tuple[str, int]] = [
 ]
 
 
-def _live_bar(sym: str, dates: list[str]) -> Optional[Bar]:
+def _live_bar(
+    sym: str,
+    dates: list[str],
+    market_open: Optional[bool] = None,
+) -> Optional[Bar]:
     """Today's live session as a synthetic bar, from the shared poller cache.
 
     The nightly ingest only adds a bar after NEPSE publishes the EOD file, so
@@ -195,6 +200,14 @@ def _live_bar(sym: str, dates: list[str]) -> Optional[Bar]:
     bar BEFORE computing: every indicator then includes the live session.
 
     Rules:
+    * Only appended when the market is OPEN (`market_open is True`). The
+      poller refreshes its cache even on non-trading days, so an ungated
+      append re-dates the last session's quote to "today" and paints a
+      phantom candle NEPSE's own chart does not have (observed 2026-10-02,
+      a Friday, duplicating the 2026-10-01 session as a new bar).
+    * `market_open is None` (status unreadable) keeps the pre-gate behaviour
+      so direct callers/tests of the quote plumbing stay meaningful; the
+      endpoint always passes a concrete True/False, never None.
     * Only appended when today is not already archived (no duplicates).
     * `open` uses the day reference (LTP - change) and `close` the LTP, so
       the candle renders like any other bar.
@@ -203,6 +216,8 @@ def _live_bar(sym: str, dates: list[str]) -> Optional[Bar]:
     * Returns None when the poller has no fresh quote - indicators then
       compute on archived data only, exactly as before.
     """
+    if market_open is False:
+        return None  # market closed: the archive's last bar is the last session
     try:
         quote = get_realtime_service().get_cached_price(sym)
     except Exception:
@@ -318,6 +333,9 @@ async def chart(
     # Today's quote from the shared poller becomes a synthetic bar appended
     # before any computation, so every indicator below is live-aware. When
     # there is no fresh quote the series is untouched and `live` says so.
+    # The merge only happens while NEPSE reports the market OPEN: the poller
+    # keeps its cache warm on closed days too, and re-dating that stale quote
+    # to today would paint a phantom candle the exchange's own chart lacks.
     live_quote = None
     try:
         q = get_realtime_service().get_cached_price(sym)
@@ -334,7 +352,18 @@ async def chart(
         )
     except Exception:
         live_quote = None
-    live_bar = _live_bar(sym, dates)
+    market_open: Optional[bool] = None
+    status_as_of: Optional[str] = None
+    if live_quote is not None:
+        # Only reachable when a quote exists, so tests without a poller never
+        # touch the upstream status call; NEPSE's status is TTL-cached anyway.
+        try:
+            st = await _nepse.get_market_status()
+            market_open = st.is_open
+            status_as_of = st.as_of
+        except Exception:
+            market_open = None  # unreadable: no live bar is trusted
+    live_bar = _live_bar(sym, dates, market_open=market_open)
     live_mode: Optional[str] = None
     if live_bar is not None:
         dates = dates + [live_bar.date]
@@ -345,7 +374,12 @@ async def chart(
         volumes = volumes + [live_bar.volume]
         latest = live_bar.date
         live_mode = "appended"
-    elif live_quote is not None and dates and dates[-1] == datetime.now().strftime("%Y-%m-%d"):
+    elif (
+        market_open is not False
+        and live_quote is not None
+        and dates
+        and dates[-1] == datetime.now().strftime("%Y-%m-%d")
+    ):
         # Today's row is archived but the close may not be published yet (the
         # ingest runs after NEPSE's EOD file). Overlay the live session onto
         # that bar so the indicators still carry the live session; when the
@@ -931,6 +965,7 @@ async def chart(
             "merged": live_mode is not None,
             "mode": live_mode,
             "quote": live_quote,
+            "market_open": market_open,
             "note": (
                 "Today's session from the live poller is included as the last bar, "
                 "so indicators carry the live session."
@@ -938,7 +973,11 @@ async def chart(
                 else "Today's live price is overlaid on the archived bar (its close "
                 "was not published yet), so indicators carry the live session."
                 if live_mode == "overlay"
-                else "No live merge needed: the latest session is fully archived"
+                else f"Market closed (NEPSE status as of {status_as_of or 'unknown'}): "
+                "the chart shows the last archived session only."
+                if market_open is False
+                else "Market status unreadable, so no live bar is trusted; the chart "
+                "shows archived sessions only."
                 if live_quote is not None
                 else "No live quote for this symbol right now; indicators are computed "
                 "on archived sessions only."

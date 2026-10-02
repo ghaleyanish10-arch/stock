@@ -21,8 +21,9 @@ Row-by-row NEPSE parity still needs the user's pasted daily table (open question
 | B2 Data defects | ✅ none found | — | A2 clean; no repairs needed. |
 | B3 Default 3M, full view, no clipping | ✅ done | 5d76671 | `fitContent()` on load; candles-only autoscale (overlays use `autoscaleInfoProvider:()=>null`); default range 3M. Verified live: axis 4,800–7,560 with zero clipping. |
 | B4 Rendering parity (body/wick, ordinal x, ranges, From/To, volume pane, tooltip) | ✅ done | 5d76671 | Trading-day x-axis (lightweight-charts is ordinal); RANGES 1W…ALL + custom dates; volume pane same-rule-coloured, hideable; OHLCV tooltip with change % and rule-based colour. |
-| B5 Parity helper page | ⬜ todo | — | `/dev/chart-parity` planned. |
+| B5 Parity helper page | ✅ done | this commit | `/dev/chart-parity?symbol=ANLB&range=3M`: renders the exact payload the chart shows as a table, plus a paste-box for NEPSE's daily table with per-row diff (green match / red mismatch with NEPSE−ours delta / grey missing). Parser tolerates commas, pipes, dd/mm/yyyy. |
 | B6 Acceptance vs NEPSE table | ⏳ blocked on user | — | Values match the page the user quoted (close 4,919.70 / O 4,935 / H 4,935 / L 4,821). |
+| B7 Live-merge phantom bar | ✅ done | this commit | Found via B5: `_live_bar` re-dated the poller's stale quote to "today", painting a phantom 2026-10-02 bar (a Friday) duplicating the 10-01 session (O 4,934.80, V 945) that NEPSE's own chart lacks. Fix: live merge only when NEPSE reports the market OPEN (same gate the card's header uses); status unreadable ⇒ no live bar. Verified: `dates[-1]` 2026-10-02 → 2026-10-01, `live.market_open: false` + honest note. Pinned by 3 new contract tests. |
 
 ## C. Green up / red down everywhere
 

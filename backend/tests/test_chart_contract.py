@@ -260,3 +260,59 @@ def test_no_duplicate_dates(client):
     body = _chart(client, "none", range="ALL")
     dates = body["series"]["dates"]
     assert len(dates) == len(set(dates))
+
+
+# -- live merge gate: a closed market must never paint a phantom candle -------
+# Observed 2026-10-02 (Friday, NEPSE closed): the poller's cache still held the
+# 2026-10-01 session, and `_live_bar` re-dated it to "today" - our chart grew a
+# bar NEPSE's own chart does not have (O 4934.80 / V 945 duplicated). These
+# tests pin the market-status gate.
+
+
+def _fake_quote():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        ltp=4919.7,
+        change=-15.1,
+        change_pct=-0.31,
+        volume=945,
+        turnover=0.0,
+        high=4935.0,
+        low=4821.0,
+        timestamp=datetime.now(),
+    )
+
+
+def _patch_poller(monkeypatch, quote):
+    monkeypatch.setattr(
+        "app.analytics.chart.get_realtime_service",
+        lambda: type("S", (), {"get_cached_price": lambda self, s: quote})(),
+    )
+
+
+def test_live_bar_suppressed_when_market_closed(monkeypatch):
+    _patch_poller(monkeypatch, _fake_quote())
+    assert chart_module._live_bar("TEST", ["2026-10-01"], market_open=False) is None
+
+
+def test_live_bar_appended_when_market_open(monkeypatch):
+    from datetime import datetime
+
+    _patch_poller(monkeypatch, _fake_quote())
+    bar_ = chart_module._live_bar("TEST", ["2026-10-01"], market_open=True)
+    assert bar_ is not None
+    assert bar_.date == datetime.now().strftime("%Y-%m-%d")
+    # open = ltp - change = 4919.70 + 15.10 = 4934.80 (hand arithmetic)
+    assert bar_.open == pytest.approx(4934.80)
+    assert bar_.close == pytest.approx(4919.70)
+    assert bar_.volume == 945
+
+
+def test_live_bar_not_appended_when_today_archived(monkeypatch):
+    from datetime import datetime
+
+    _patch_poller(monkeypatch, _fake_quote())
+    today = datetime.now().strftime("%Y-%m-%d")
+    assert chart_module._live_bar("TEST", ["2026-10-01", today], market_open=True) is None
