@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any, Callable, Optional, Sequence
 
 #: A single OHLCV bar. Field names match NEPSE's `today-price` payload.
@@ -88,6 +88,28 @@ def _compute_on_valid(
     for orig_idx, result in zip(valid_indices, clean_result):
         out[orig_idx] = result
     return out
+
+
+def _nepse_week_start(d: date, week_start: str = "sunday") -> date:
+    """The week start date for the NEPSE trading week containing d.
+
+    NEPSE trades Sunday-Thursday (or Monday-Friday). The week bucket is determined
+    by week_start:
+    - week_start="sunday" (default): week is Sun-Thu, bucket = most recent Sunday
+    - week_start="monday": week is Mon-Fri, bucket = most recent Monday
+
+    weekday() is Mon=0..Sun=6.
+    For week_start="sunday": (weekday + 1) % 7 maps Sun->0, Mon->1 .. Thu->4
+    For week_start="monday": weekday() maps Mon->0, Tue->1 .. Fri->4
+    """
+    if week_start == "monday":
+        return d - timedelta(days=d.weekday())
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def _nepse_week_sunday(d: date) -> date:
+    """Backward-compatible wrapper for week_start='sunday'."""
+    return _nepse_week_start(d, week_start="sunday")
 
 
 # ---------------------------------------------------------------------------

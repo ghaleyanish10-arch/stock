@@ -9,52 +9,83 @@ from datetime import datetime
 from app.analytics.indicators import (
     Bar,
     sma_on_valid,
-    _nepse_week_sunday,
+    _nepse_week_start,
 )
-from app.analytics.chart import _aggregate_ohlcv, _auto_timeframe as chart_auto_timeframe
+from app.analytics.chart import _aggregate_ohlcv
 
 
 class TestNepseWeekSunday:
     def test_sunday_is_sunday(self):
         """Sunday maps to itself."""
         d = date(2026, 9, 20)  # Sunday
-        assert _nepse_week_sunday(d) == d
+        assert _nepse_week_start(d, week_start="sunday") == d
 
     def test_monday_maps_to_previous_sunday(self):
         """Monday maps to previous Sunday."""
         d = date(2026, 9, 21)  # Monday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
 
     def test_tuesday_maps_to_previous_sunday(self):
         """Tuesday maps to previous Sunday."""
         d = date(2026, 9, 22)  # Tuesday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
 
     def test_wednesday_maps_to_previous_sunday(self):
         """Wednesday maps to previous Sunday."""
         d = date(2026, 9, 23)  # Wednesday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
 
     def test_thursday_maps_to_previous_sunday(self):
         """Thursday maps to previous Sunday."""
         d = date(2026, 9, 24)  # Thursday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
 
     def test_friday_maps_to_previous_sunday(self):
         """Friday maps to previous Sunday (non-trading day, but function handles it)."""
         d = date(2026, 9, 25)  # Friday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
 
     def test_saturday_maps_to_previous_sunday(self):
         """Saturday maps to previous Sunday."""
         d = date(2026, 9, 26)  # Saturday
         expected = date(2026, 9, 20)  # Previous Sunday
-        assert _nepse_week_sunday(d) == expected
+        assert _nepse_week_start(d, week_start="sunday") == expected
+
+
+class TestNepseWeekMonday:
+    """Tests for week_start='monday' (Mon-Fri trading week)."""
+
+    def test_monday_is_monday(self):
+        """Monday maps to itself."""
+        d = date(2026, 9, 21)  # Monday
+        from app.analytics.indicators import _nepse_week_start
+        assert _nepse_week_start(d, week_start="monday") == d
+
+    def test_tuesday_maps_to_monday(self):
+        """Tuesday maps to Monday."""
+        d = date(2026, 9, 22)  # Tuesday
+        expected = date(2026, 9, 21)  # Monday
+        from app.analytics.indicators import _nepse_week_start
+        assert _nepse_week_start(d, week_start="monday") == expected
+
+    def test_friday_maps_to_monday(self):
+        """Friday maps to Monday."""
+        d = date(2026, 9, 25)  # Friday
+        expected = date(2026, 9, 21)  # Monday
+        from app.analytics.indicators import _nepse_week_start
+        assert _nepse_week_start(d, week_start="monday") == expected
+
+    def test_saturday_maps_to_monday(self):
+        """Saturday maps to Monday."""
+        d = date(2026, 9, 26)  # Saturday
+        expected = date(2026, 9, 21)  # Monday
+        from app.analytics.indicators import _nepse_week_start
+        assert _nepse_week_start(d, week_start="monday") == expected
 
 
 class TestAggregateOhlcvWeekly:
@@ -198,6 +229,31 @@ class TestPriceChannelLabel:
         )
         # Label is the last session's date (Thursday)
         assert dates[0] == "2026-09-24"
+
+
+class TestBarLabelMode:
+    def test_bar_label_mode_period_start(self):
+        """bar_label_mode='period_start' uses period start date as label."""
+        bars = [
+            Bar(date="2026-09-20", open=100, high=102, low=98, close=101, volume=1000),  # Sun
+            Bar(date="2026-09-21", open=101, high=103, low=99, close=102, volume=1000),  # Mon
+            Bar(date="2026-09-22", open=102, high=104, low=100, close=103, volume=1000),  # Tue
+            Bar(date="2026-09-23", open=103, high=105, low=101, close=104, volume=1000),  # Wed
+            Bar(date="2026-09-24", open=104, high=106, low=102, close=105, volume=1000),  # Thu
+        ]
+        dates, _, _, _, _, _ = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "W",
+            week_start="sunday",
+            bar_label_mode="period_start",
+        )
+        # With period_start, label is the week start (Sunday)
+        assert dates[0] == "2026-09-20"  # Sunday (period start)
 
 
 class TestSmaWarmup:
