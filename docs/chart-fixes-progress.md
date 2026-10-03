@@ -6,11 +6,11 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| A1 Weekly aggregation (Sun-Thu, Mon-Fri) | ✅ done | `_aggregate_ohlcv` with `week_start` param (sunday\|monday), tests pass |
-| A2 Monthly aggregation (calendar month) | ✅ done | Groups by YYYY-MM, tests pass |
+| A1 Weekly aggregation (Sun-Thu, Mon-Fri) | ✅ done | `_aggregate_ohlcv` with `week_start` param (sunday\|monday); weeks are Mon-Sun (monday) or Sun-Sat (sunday); trading days Sun-Thu; tests pass |
+| A2 Monthly aggregation (calendar month) | ✅ done | Groups by YYYY-MM; period_start = 1st of month; tests pass |
 | A3 Auto timeframe per range (1W→D, 1M→D, 3M→W, 6M→W, YTD→W, 1Y→W, ALL→W) | ✅ done | `_auto_timeframe` function, marked `spec_status: unverified` |
-| A4 Bar label mode (last_session \| period_start) | ✅ done | `bar_label_mode` param, default `period_start` inferred from AHL 3M labels |
-| A5 Timeframe tests | ✅ done | 22 tests in `test_timeframe.py` (normal week, holiday, month split, partial week, SMA/RSI warmup, VWMA, live quote, invalid tf) |
+| A4 Bar label mode (last_session \| period_start) | ✅ done | `period_start` = CALENDAR start (Mon for week_start=monday, Sun for sunday, 1st for monthly), NOT first trading session; `last_session` = last trading day in bucket; tests pass |
+| A5 Timeframe tests | ✅ done | **33 tests** in `test_timeframe.py`: week mapping (14), weekly OHLCV (4), label modes (2), Mon-Fri week (4), monthly (2), SMA/RSI warmup (3), parity (1), warmup reason (1), panel (1), VWMA (1), live quote (2), invalid tf (1) |
 
 ## B. Frontend timeframe selector
 
@@ -19,12 +19,12 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 | B1 Auto\|D\|W\|M selector in toolbar | ✅ done | Persisted per symbol in localStorage (`chart-tf:{symbol}`) |
 | B2 Auto-resolved label shown | ✅ done | Selector shows "Auto (W)" etc. |
 | B3 Week start selector (when tf=W) | ✅ done | Sunday\|Monday dropdown, only visible for Weekly |
-| B4 Bar label mode selector | ✅ done | Last session \| Period start dropdown |
-| B4 Aggregated-candle tooltip (period dates, OHLC, change%, volume) | ✅ done | Tooltip uses aggregated series data |
-| B5 Legend chips show warm_up reason | ✅ done | Uses backend `warm_up` field per indicator |
-| B6 Right padding limited | ✅ done | `rightOffset: 1` on timeScale |
-| B7 Legend space reserved | ✅ done | Legend rendered outside chart in card toolbar |
-| B8 y-domain contains all visible high/low | ✅ done | Only candle series participates in autoscale |
+| B4 Bar label mode selector | ✅ done | Last session \| Period start dropdown; default `period_start` |
+| B5 Aggregated-candle tooltip | ✅ done | Shows "Week of Mon 21 Sep, sessions 22 Sep to 24 Sep" using `first_session_dates` / `last_session_dates` |
+| B6 Legend chips show warm_up reason | ✅ done | Uses backend `warm_up` field per indicator |
+| B7 Right padding limited | ✅ done | `rightOffset: 1` on timeScale |
+| B8 Legend space reserved | ✅ done | Legend rendered in card toolbar (outside chart canvas) |
+| B9 y-domain contains all visible high/low | ✅ done | Only candle series participates in autoscale (`autoscaleInfoProvider: () => null` on overlays) |
 
 ## C. Live candle for W/M
 
@@ -49,7 +49,7 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| F1 SMA20/EMA20/WMA20/MA-EMA Cross start first candle | ⏳ pending | API returns 14/14 non-null on 3M weekly, 62/62 on 3M daily. Awaiting NEPSE tooltip confirmation. |
+| F1 SMA20/EMA20/WMA20/MA-EMA Cross start first candle | ⏳ pending | API returns 13/13 non-null on 3M weekly, 62/62 on 3M daily. Awaiting NEPSE tooltip confirmation. |
 | F2 3M weekly auto-resolves correctly | ✅ verified | `tf=auto` → `applied: "W"` for 3M range |
 | F3 No empty right area | ⏳ pending | `rightOffset: 1`, no extra space. Awaiting visual confirmation. |
 | F4 Nothing clipped/covered | ⏳ pending | Overlays use `autoscaleInfoProvider: () => null`. Awaiting visual confirmation. |
@@ -69,17 +69,16 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 | --- | --- | --- |
 | J1 chart-fixes-progress.md updated | ✅ done | This file |
 | J2 indicator-health.md updated | ✅ done | Includes D/W/M results |
-| J3 All backend tests pass | ✅ done | 783 passed, 8 skipped |
+| J3 All backend tests pass | ✅ done | **789 passed, 8 skipped** (791 collected) |
 | J4 Frontend builds clean | ✅ done | `npm run build` ✓ |
 
 ## Unverified settings (spec_status: unverified)
 
 1. **Auto timeframe table**: 1W→D, 1M→D, 3M→W, 6M→W, YTD→W, 1Y→W, ALL→W
-2. **Week start default**: `week_start=monday` (inferred from NEPSE AHL 3M labels: Mon 6 Jul, 20 Jul, 3 Aug, 17 Aug, 14 Sep, 28 Sep; NOT confirmed by NEPSE)
-3. **Monthly (M) timeframe**: Manual only (not in Auto table)
-4. **Bar label mode default**: `period_start` (inferred from NEPSE AHL 3M labels; NOT confirmed by NEPSE)
-5. **Gap-day colour rule**: Default `prev_close` (unverified) — setting visible in toolbar (Highcharts normally colours by close vs open)
-6. **Resize behaviour**: Unknown — NEPSE may or may not auto-switch D/W/M on resize
+2. **Week start default**: `week_start=monday` (inferred from NEPSE AHL 3M labels: Mon 6 Jul, 20 Jul, 3 Aug, 17 Aug, 14 Sep, 28 Sep; **NOT confirmed by NEPSE**)
+3. **Bar label mode default**: `period_start` (inferred from NEPSE AHL 3M labels; **NOT confirmed by NEPSE**)
+4. **Gap-day colour rule**: Default `prev_close` (unverified) — selector visible in toolbar (Highcharts normally colours by close vs open)
+5. **Resize behaviour**: Unknown — NEPSE may/may not auto-switch D/W/M on resize
 
 ## Open items for user (nothing marked verified until these are provided)
 
