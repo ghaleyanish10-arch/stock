@@ -895,6 +895,8 @@ export interface ChartResponse {
     spec_status: string;
     week_start: string;
     bar_label_mode: string;
+    first_session_dates: string[] | null;
+    last_session_dates: string[] | null;
     note: string;
   };
   warm_up: Record<string, { first_available: string | null; reason: string }>;
