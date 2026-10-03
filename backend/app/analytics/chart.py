@@ -327,18 +327,20 @@ def _aggregate_ohlcv(
     list[Optional[float]],
     list[Optional[float]],
     list[Optional[float]],
+    list[str],
+    list[str],
 ]:
     """Collapse daily bars into weekly or monthly bars (B: timeframe selector).
 
-    Weekly = the NEPSE trading week (Sun-Thu or Mon-Fri); a session joins
-    the bucket of the week-start day that starts its week (the archive holds no
-    Friday/Saturday sessions, asserted by the contract tests). Monthly = the
-    calendar month.
+    Weekly buckets: Monday-Sunday (week_start=monday) or Sunday-Saturday (week_start=sunday).
+    Trading days are Sunday-Thursday. A session joins the bucket of the calendar week
+    it falls in. The label is:
+      - bar_label_mode="last_session": the last trading session's date in the bucket
+      - bar_label_mode="period_start": the CALENDAR start of the period (Monday for
+        week_start=monday, Sunday for week_start=sunday, 1st of month for monthly),
+        independent of holidays.
 
-    Bar label: the period's LAST session date by default, so the running (incomplete)
-    week carries the day its close was actually observed on and lines up with
-    the latest daily session. Set bar_label_mode="period_start" to use the
-    first session's date instead.
+    Returns: (dates, opens, highs, lows, closes, volumes, first_session_dates, last_session_dates)
 
     Aggregation: open = first open, high = max high, low = min low,
     close = last close, volume = sum of the non-null dailies (None only when
@@ -361,21 +363,34 @@ def _aggregate_ohlcv(
     out_l: list[Optional[float]] = []
     out_c: list[Optional[float]] = []
     out_v: list[Optional[float]] = []
+    out_first_session: list[str] = []
+    out_last_session: list[str] = []
     for idxs in buckets.values():
         i0, i1 = idxs[0], idxs[-1]
         h_present = [highs[i] for i in idxs if highs[i] is not None]
         l_present = [lows[i] for i in idxs if lows[i] is not None]
         v_present = [volumes[i] for i in idxs if volumes[i] is not None]
+
+        # Calendar period start (independent of whether that day has a session)
+        bucket_key = list(buckets.keys())[list(buckets.values()).index(idxs)]
+        if timeframe == "W":
+            period_start = bucket_key  # This is the week_start date (Monday or Sunday)
+        else:
+            period_start = bucket_key + "-01"  # Monthly: 1st of month (YYYY-MM-01)
+
         if bar_label_mode == "period_start":
-            out_dates.append(dates[i0])
+            out_dates.append(period_start)
         else:
             out_dates.append(dates[i1])
+
         out_o.append(opens[i0])
         out_h.append(max(h_present) if h_present else None)
         out_l.append(min(l_present) if l_present else None)
         out_c.append(closes[i1])
         out_v.append(sum(v_present) if v_present else None)
-    return out_dates, out_o, out_h, out_l, out_c, out_v
+        out_first_session.append(dates[i0])
+        out_last_session.append(dates[i1])
+    return out_dates, out_o, out_h, out_l, out_c, out_v, out_first_session, out_last_session
 
 
 @router.get("/chart/{symbol}", summary="Candles, indicators and panel data")
@@ -558,7 +573,8 @@ async def chart(
     daily_highs, daily_lows = highs, lows
     daily_closes, daily_volumes = closes, volumes
     if applied_tf != "D":
-        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+        (dates, opens, highs, lows, closes, volumes,
+         first_session_dates, last_session_dates) = _aggregate_ohlcv(
             dates, opens, highs, lows, closes, volumes, applied_tf, week_start, bar_label_mode
         )
 
@@ -1243,19 +1259,19 @@ async def chart(
             "spec_status": "unverified",
             "week_start": week_start,
             "bar_label_mode": bar_label_mode,
+            "first_session_dates": first_session_dates if applied_tf != "D" else None,
+            "last_session_dates": last_session_dates if applied_tf != "D" else None,
             "note": (
                 "Daily bars."
                 if applied_tf == "D"
                 else (
-                    "NEPSE trading week Monday-Friday (week_start=monday); each bar is labelled with "
-                    "the week's first session (period_start), open/high/low/close/volume aggregate the "
-                    "week's dailies. Default week_start=monday and bar_label_mode=period_start are "
-                    "inferred from NEPSE AHL 3M labels (Mon 6 Jul, 20 Jul, 3 Aug, 17 Aug, 14 Sep, 28 Sep); "
-                    "spec_status: unverified."
+                    "NEPSE trading week Monday-Sunday (week_start=monday) or Sunday-Saturday (week_start=sunday); "
+                    "trading days Sunday-Thursday. Bar label: period_start = calendar week start (Mon/Sun), "
+                    "last_session = last trading day in bucket. Defaults inferred from NEPSE AHL 3M labels "
+                    "(Mon 6 Jul, 20 Jul, 3 Aug, 17 Aug, 14 Sep, 28 Sep); spec_status: unverified."
                 )
                 if applied_tf == "W"
-                else "Calendar months; each bar is labelled with the month's first "
-                "session (period_start) and aggregates that month's dailies."
+                else "Calendar months; bar label: period_start = 1st of month, last_session = last trading day of month."
             ),
         },
         "warm_up": warm_up,

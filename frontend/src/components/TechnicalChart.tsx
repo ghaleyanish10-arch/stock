@@ -211,6 +211,8 @@ export function TechnicalChart({
     auto: boolean;
     week_start: string;
     bar_label_mode: string;
+    first_session_dates: string[] | null;
+    last_session_dates: string[] | null;
     note: string;
   };
   /** Warm-up info from backend per indicator. */
@@ -236,6 +238,8 @@ export function TechnicalChart({
       chg: number | null;
       chgPct: number | null;
       volume: number | null;
+      firstSession: string | null;
+      lastSession: string | null;
     } | null;
   } | null>(null);
 
@@ -756,6 +760,8 @@ export function TechnicalChart({
         chg,
         chgPct,
         volume: s.volume[idx],
+        firstSession: timeframe?.first_session_dates?.[idx] ?? null,
+        lastSession: timeframe?.last_session_dates?.[idx] ?? null,
       };
       const wrap = container.getBoundingClientRect();
       const x = Math.min(Math.max(param.point.x + 14, 8), Math.max(wrap.width - 190, 8));
@@ -904,6 +910,11 @@ export function TechnicalChart({
       {tooltip?.row && (
         <div className="tc-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
           <div className="tc-tooltip-date">{tooltip.row.date}</div>
+          {tooltip.row.firstSession && tooltip.row.lastSession && tooltip.row.firstSession !== tooltip.row.lastSession && (
+            <div className="tc-tooltip-period">
+              Week of {fmtDate(tooltip.row.firstSession)}, sessions {fmtDate(tooltip.row.firstSession)} to {fmtDate(tooltip.row.lastSession)}
+            </div>
+          )}
           <div className="tc-tooltip-grid">
             <span>O</span>
             <span>{fmtNum(tooltip.row.open)}</span>

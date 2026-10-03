@@ -90,7 +90,15 @@ class TestNepseWeekMonday:
 
 class TestAggregateOhlcvWeekly:
     def test_normal_week_ohlcv(self):
-        """Normal week: open=first, high=max, low=min, close=last, volume=sum."""
+        """Normal week: open=first, high=max, low=min, close=last, volume=sum.
+        
+        Input: 5 bars Sun-Thu (20-24 Sep 2026), week_start=sunday
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        last_session label: Thu 24 Sep (last trading day)
+        period_start label: Sun 20 Sep (calendar week start)
+        first_session: Sun 20 Sep, last_session: Thu 24 Sep
+        OHLCV: open=100 (Sun), high=106 (Thu), low=98 (Sun), close=105 (Thu), volume=5000+1000=6000
+        """
         bars = []
         for i in range(5):  # Sun-Thu
             base = 100.0 + i
@@ -102,7 +110,7 @@ class TestAggregateOhlcvWeekly:
                 close=base + 1.0,
                 volume=1000.0 + i * 100,
             ))
-        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -113,6 +121,8 @@ class TestAggregateOhlcvWeekly:
         )
         assert len(dates) == 1
         assert dates[0] == "2026-09-24"  # Thursday (last session)
+        assert first_sessions[0] == "2026-09-20"  # First session
+        assert last_sessions[0] == "2026-09-24"   # Last session
         assert opens[0] == pytest.approx(100.0)  # First open
         assert highs[0] == pytest.approx(106.0)  # Max high (Thursday)
         assert lows[0] == pytest.approx(98.0)   # Min low (Sunday)
@@ -120,7 +130,14 @@ class TestAggregateOhlcvWeekly:
         assert volumes[0] == pytest.approx(sum(1000 + i * 100 for i in range(5)))
 
     def test_week_with_holiday(self):
-        """Week with holiday: missing day is skipped, aggregation uses remaining days."""
+        """Week with holiday: missing day is skipped, aggregation uses remaining days.
+        
+        Input: 4 bars Sun, Mon, Wed, Thu (Tue 22 Sep holiday)
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        last_session label: Thu 24 Sep (last trading day)
+        first_session: Sun 20 Sep, last_session: Thu 24 Sep
+        OHLCV: open=100 (Sun), high=106 (Thu), low=98 (Sun), close=105 (Thu), volume=4000
+        """
         bars = [
             Bar(date="2026-09-20", open=100, high=102, low=98, close=101, volume=1000),  # Sun
             Bar(date="2026-09-21", open=101, high=103, low=99, close=102, volume=1000),  # Mon
@@ -128,7 +145,7 @@ class TestAggregateOhlcvWeekly:
             Bar(date="2026-09-23", open=103, high=105, low=101, close=104, volume=1000),  # Wed
             Bar(date="2026-09-24", open=104, high=106, low=102, close=105, volume=1000),  # Thu
         ]
-        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -139,13 +156,23 @@ class TestAggregateOhlcvWeekly:
         )
         assert len(dates) == 1
         assert dates[0] == "2026-09-24"  # Last available session (Thu)
+        assert first_sessions[0] == "2026-09-20"
+        assert last_sessions[0] == "2026-09-24"
         assert opens[0] == pytest.approx(100.0)  # First available (Sun)
         assert highs[0] == pytest.approx(106.0)  # Thu high = 106
         assert lows[0] == pytest.approx(98.0)  # Min low (Sun)
         assert closes[0] == pytest.approx(105.0)  # Last close (Thu close = 105)
+        assert volumes[0] == pytest.approx(4000.0)
 
     def test_week_split_across_month_end(self):
-        """Week split across month end: weekly grouping by Sunday, monthly by calendar month."""
+        """Week split across month end: weekly grouping by Sunday, monthly by calendar month.
+        
+        Input: 5 bars Sun 27 Sep - Thu 1 Oct 2026
+        Weekly (week_start=sunday): One week bucket Sun 27 Sep - Sat 3 Oct
+          last_session label: Thu 1 Oct (last trading day)
+          first_session: Sun 27 Sep, last_session: Thu 1 Oct
+        Monthly: Two months - Sep (27-30) and Oct (1)
+        """
         bars = []
         # Week starting Sep 27 (Sun) - crosses into October
         for i in range(5):
@@ -158,7 +185,7 @@ class TestAggregateOhlcvWeekly:
                 close=101.0 + i,
                 volume=1000.0,
             ))
-        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -169,8 +196,10 @@ class TestAggregateOhlcvWeekly:
         )
         assert len(dates) == 1  # One week (Sun 27 Sep - Thu 1 Oct)
         assert dates[0] == "2026-10-01"  # Thursday 1 Oct (last session)
+        assert first_sessions[0] == "2026-09-27"
+        assert last_sessions[0] == "2026-10-01"
         # Monthly grouping would be different - September vs October
-        dates_m, opens_m, highs_m, lows_m, closes_m, volumes_m = _aggregate_ohlcv(
+        dates_m, opens_m, highs_m, lows_m, closes_m, volumes_m, first_m, last_m = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -181,19 +210,27 @@ class TestAggregateOhlcvWeekly:
         )
         # Monthly groups by calendar month, so should be 2 months
         # Sep 27-30 (4 days) and Oct 1 (1 day)
-        # Wait, actually the dates are Sep 27, 28, 29, 29, 30? No, Sep 27-30 is 4 days, Oct 1 is 1 day
-        # So 2 months in the data
         assert len(dates_m) == 2
+        # Monthly labels are last trading day by default
+        assert dates_m[0] == "2026-09-30"  # Last session in Sep
+        assert dates_m[1] == "2026-10-01"  # Last session in Oct
 
     def test_current_partial_week(self):
-        """Current partial week: only sessions so far are included."""
+        """Current partial week: only sessions so far are included.
+        
+        Input: 3 bars Sun-Tue (20-22 Sep), Wed/Thu not yet happened
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        last_session label: Tue 22 Sep (last available session)
+        first_session: Sun 20 Sep, last_session: Tue 22 Sep
+        OHLCV: open=100 (Sun), high=104 (Tue), low=98 (Sun), close=103 (Tue), volume=3000
+        """
         bars = [
             Bar(date="2026-09-20", open=100, high=102, low=98, close=101, volume=1000),  # Sun
             Bar(date="2026-09-21", open=101, high=103, low=99, close=102, volume=1000),  # Mon
             Bar(date="2026-09-22", open=102, high=104, low=100, close=103, volume=1000),  # Tue
             # Wed, Thu not yet happened
         ]
-        dates, opens, highs, lows, closes, volumes = _aggregate_ohlcv(
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -204,13 +241,22 @@ class TestAggregateOhlcvWeekly:
         )
         assert len(dates) == 1
         assert dates[0] == "2026-09-22"  # Tuesday (last available)
+        assert first_sessions[0] == "2026-09-20"
+        assert last_sessions[0] == "2026-09-22"
         assert opens[0] == pytest.approx(100.0)
         assert closes[0] == pytest.approx(103.0)  # Last close is Tue
+        assert volumes[0] == pytest.approx(3000.0)
 
 
 class TestPriceChannelLabel:
     def test_bar_date_is_last_session(self):
-        """Bar date label = last session of the period."""
+        """Bar date label = last session of the period (default bar_label_mode=last_session).
+        
+        Input: 5 bars Sun-Thu (20-24 Sep), week_start=sunday
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        last_session label: Thu 24 Sep (last trading day)
+        period_start label: Sun 20 Sep (calendar week start)
+        """
         bars = [
             Bar(date="2026-09-20", open=100, high=102, low=98, close=101, volume=1000),  # Sun
             Bar(date="2026-09-21", open=101, high=103, low=99, close=102, volume=1000),  # Mon
@@ -218,7 +264,7 @@ class TestPriceChannelLabel:
             Bar(date="2026-09-23", open=103, high=105, low=101, close=104, volume=1000),  # Wed
             Bar(date="2026-09-24", open=104, high=106, low=102, close=105, volume=1000),  # Thu
         ]
-        dates, _, _, _, _, _ = _aggregate_ohlcv(
+        dates, _, _, _, _, _, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -227,13 +273,21 @@ class TestPriceChannelLabel:
             [b.volume for b in bars],
             "W",
         )
-        # Label is the last session's date (Thursday)
+        # Default bar_label_mode=last_session -> label is last trading session (Thursday)
         assert dates[0] == "2026-09-24"
+        assert first_sessions[0] == "2026-09-20"
+        assert last_sessions[0] == "2026-09-24"
 
 
 class TestBarLabelMode:
     def test_bar_label_mode_period_start(self):
-        """bar_label_mode='period_start' uses period start date as label."""
+        """bar_label_mode='period_start' uses CALENDAR period start date as label (Sunday for week_start=sunday).
+        
+        Input: 5 bars Sun-Thu (20-24 Sep), week_start=sunday
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        period_start label: Sun 20 Sep (calendar week start, independent of holidays)
+        last_session label: Thu 24 Sep (last trading day)
+        """
         bars = [
             Bar(date="2026-09-20", open=100, high=102, low=98, close=101, volume=1000),  # Sun
             Bar(date="2026-09-21", open=101, high=103, low=99, close=102, volume=1000),  # Mon
@@ -241,7 +295,7 @@ class TestBarLabelMode:
             Bar(date="2026-09-23", open=103, high=105, low=101, close=104, volume=1000),  # Wed
             Bar(date="2026-09-24", open=104, high=106, low=102, close=105, volume=1000),  # Thu
         ]
-        dates, _, _, _, _, _ = _aggregate_ohlcv(
+        dates, _, _, _, _, _, first_sessions, last_sessions = _aggregate_ohlcv(
             [b.date for b in bars],
             [b.open for b in bars],
             [b.high for b in bars],
@@ -252,8 +306,213 @@ class TestBarLabelMode:
             week_start="sunday",
             bar_label_mode="period_start",
         )
-        # With period_start, label is the week start (Sunday)
-        assert dates[0] == "2026-09-20"  # Sunday (period start)
+        # With period_start, label is the CALENDAR week start (Sunday 20 Sep), not first trading session
+        assert dates[0] == "2026-09-20"  # Sunday (calendar period start)
+        assert first_sessions[0] == "2026-09-20"  # First trading session
+        assert last_sessions[0] == "2026-09-24"   # Last trading session
+
+
+class TestWeekStartMonday:
+    def test_monday_week_ohlcv(self):
+        """Normal Mon-Fri week with week_start=monday, bar_label_mode=period_start.
+        
+        Input: 5 bars Mon-Fri (21-25 Sep 2026)
+        Week bucket: Mon 21 Sep - Sun 27 Sep
+        period_start label: Mon 21 Sep (calendar week start)
+        last_session label: Fri 25 Sep (last trading day)
+        first_session: Mon 21 Sep, last_session: Fri 25 Sep
+        OHLCV: open=100 (Mon), high=106 (Fri), low=98 (Mon), close=105 (Fri), volume=6000
+        """
+        bars = []
+        for i in range(5):  # Mon-Fri
+            base = 100.0 + i
+            bars.append(Bar(
+                date=f"2026-09-{21+i:02d}",
+                open=base,
+                high=base + 2.0,
+                low=base - 2.0,
+                close=base + 1.0,
+                volume=1000.0 + i * 100,
+            ))
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "W",
+            week_start="monday",
+            bar_label_mode="period_start",
+        )
+        assert len(dates) == 1
+        assert dates[0] == "2026-09-21"  # Monday (calendar period start)
+        assert first_sessions[0] == "2026-09-21"
+        assert last_sessions[0] == "2026-09-25"  # Friday (last trading day)
+        assert opens[0] == pytest.approx(100.0)
+        assert highs[0] == pytest.approx(106.0)
+        assert lows[0] == pytest.approx(98.0)
+        assert closes[0] == pytest.approx(105.0)
+        assert volumes[0] == pytest.approx(sum(1000 + i * 100 for i in range(5)))
+
+    def test_monday_holiday_week(self):
+        """Monday holiday: label = Monday, first_session = Tuesday.
+        
+        Input: 4 bars Tue-Fri (22-25 Sep), Mon 21 Sep is holiday
+        Week bucket: Mon 21 Sep - Sun 27 Sep
+        period_start label: Mon 21 Sep (calendar week start, even though holiday)
+        first_session: Tue 22 Sep, last_session: Fri 25 Sep
+        OHLCV: open=101 (Tue), high=106 (Fri), low=99 (Tue), close=105 (Fri), volume=5000
+        """
+        bars = [
+            # Mon 21 Sep is holiday - no bar
+            Bar(date="2026-09-22", open=101, high=103, low=99, close=102, volume=1000),  # Tue
+            Bar(date="2026-09-23", open=102, high=104, low=100, close=103, volume=1000),  # Wed
+            Bar(date="2026-09-24", open=103, high=105, low=101, close=104, volume=1000),  # Thu
+            Bar(date="2026-09-25", open=104, high=106, low=102, close=105, volume=1000),  # Fri
+        ]
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "W",
+            week_start="monday",
+            bar_label_mode="period_start",
+        )
+        assert len(dates) == 1
+        assert dates[0] == "2026-09-21"  # Monday (calendar period start, even though holiday)
+        assert first_sessions[0] == "2026-09-22"  # First actual session = Tuesday
+        assert last_sessions[0] == "2026-09-25"   # Last session = Friday
+        assert opens[0] == pytest.approx(101.0)  # Tuesday open
+        assert closes[0] == pytest.approx(105.0)  # Friday close
+
+    def test_monday_partial_week(self):
+        """Current partial week with week_start=monday.
+        
+        Input: 3 bars Mon-Wed (21-23 Sep), Thu/Fri not yet happened
+        Week bucket: Mon 21 Sep - Sun 27 Sep
+        last_session label: Wed 23 Sep (last available)
+        first_session: Mon 21 Sep, last_session: Wed 23 Sep
+        """
+        bars = [
+            Bar(date="2026-09-21", open=100, high=102, low=98, close=101, volume=1000),  # Mon
+            Bar(date="2026-09-22", open=101, high=103, low=99, close=102, volume=1000),  # Tue
+            Bar(date="2026-09-23", open=102, high=104, low=100, close=103, volume=1000),  # Wed
+            # Thu, Fri not yet happened
+        ]
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "W",
+            week_start="monday",
+            bar_label_mode="last_session",
+        )
+        assert len(dates) == 1
+        assert dates[0] == "2026-09-23"  # Wednesday (last available session)
+        assert first_sessions[0] == "2026-09-21"
+        assert last_sessions[0] == "2026-09-23"
+
+    def test_sunday_week_for_comparison(self):
+        """Sunday week (week_start=sunday) for comparison.
+        
+        Input: 5 bars Sun-Thu (20-24 Sep)
+        Week bucket: Sun 20 Sep - Sat 26 Sep
+        period_start label: Sun 20 Sep (calendar week start)
+        first_session: Sun 20 Sep, last_session: Thu 24 Sep
+        """
+        bars = []
+        for i in range(5):  # Sun-Thu
+            base = 100.0 + i
+            bars.append(Bar(
+                date=f"2026-09-{20+i:02d}",
+                open=base,
+                high=base + 2.0,
+                low=base - 2.0,
+                close=base + 1.0,
+                volume=1000.0 + i * 100,
+            ))
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "W",
+            week_start="sunday",
+            bar_label_mode="period_start",
+        )
+        assert len(dates) == 1
+        assert dates[0] == "2026-09-20"  # Sunday (calendar period start)
+        assert first_sessions[0] == "2026-09-20"
+        assert last_sessions[0] == "2026-09-24"
+
+
+class TestMonthlyAggregation:
+    def test_monthly_label_period_start(self):
+        """Monthly: label = 1st of month (period_start), first/last session dates.
+        
+        Input: 5 bars across Sep 30 - Oct 3 (month boundary)
+        Monthly buckets: September (1-30), October (1-31)
+        period_start labels: 2026-09-01, 2026-10-01
+        last_session labels: 2026-09-30, 2026-10-03
+        """
+        bars = [
+            Bar(date="2026-09-30", open=100, high=102, low=98, close=101, volume=1000),  # Wed
+            Bar(date="2026-10-01", open=101, high=103, low=99, close=102, volume=1000),  # Thu
+            Bar(date="2026-10-02", open=102, high=104, low=100, close=103, volume=1000),  # Fri
+            Bar(date="2026-10-03", open=103, high=105, low=101, close=104, volume=1000),  # Sat (non-trading, but function handles)
+        ]
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "M",
+            bar_label_mode="period_start",
+        )
+        assert len(dates) == 2
+        assert dates[0] == "2026-09-01"  # 1st of September
+        assert dates[1] == "2026-10-01"  # 1st of October
+        assert first_sessions[0] == "2026-09-30"
+        assert last_sessions[0] == "2026-09-30"
+        assert first_sessions[1] == "2026-10-01"
+        assert last_sessions[1] == "2026-10-03"
+
+    def test_monthly_label_last_session(self):
+        """Monthly: label = last trading day (last_session).
+        
+        Input: same as above
+        last_session labels: 2026-09-30, 2026-10-03
+        """
+        bars = [
+            Bar(date="2026-09-30", open=100, high=102, low=98, close=101, volume=1000),
+            Bar(date="2026-10-01", open=101, high=103, low=99, close=102, volume=1000),
+            Bar(date="2026-10-02", open=102, high=104, low=100, close=103, volume=1000),
+            Bar(date="2026-10-03", open=103, high=105, low=101, close=104, volume=1000),
+        ]
+        dates, opens, highs, lows, closes, volumes, first_sessions, last_sessions = _aggregate_ohlcv(
+            [b.date for b in bars],
+            [b.open for b in bars],
+            [b.high for b in bars],
+            [b.low for b in bars],
+            [b.close for b in bars],
+            [b.volume for b in bars],
+            "M",
+            bar_label_mode="last_session",
+        )
+        assert len(dates) == 2
+        assert dates[0] == "2026-09-30"  # Last session in September
+        assert dates[1] == "2026-10-03"  # Last session in October
 
 
 class TestSmaWarmup:
