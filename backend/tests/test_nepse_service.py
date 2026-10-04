@@ -271,6 +271,44 @@ async def test_closed_market_status_dict_variant_falls_back():
     assert summary.is_closed is True
 
 
+async def test_nepse_index_prefers_current_value_over_prior_close():
+    """Regression (2026-10-04): on NEPSE's /api/nots payloads `close` is the
+    PREVIOUS session's close and `currentValue` is the live value. Preferring
+    `close` paired yesterday's value (2,599.15) with today's change (-11.90),
+    so the header disagreed with the index-history chart (2,587.25) by exactly
+    one session. Real payload captured from the nots endpoint."""
+    adapter = FakeNepseAdapter()
+    adapter.nepse_index = [{
+        "id": 58,
+        "index": "NEPSE Index",
+        "close": 2599.15,          # prior session close (Oct 1)
+        "previousClose": 2587.2535,
+        "currentValue": 2587.25,   # live value (Oct 2)
+        "change": -11.9,
+        "perChange": -0.45,
+    }]
+    svc = NepseService(client=adapter)
+    summary = await svc.get_nepse_index()
+    assert summary.is_closed is False
+    assert summary.value == 2587.25
+    assert summary.change == -11.9
+
+
+async def test_sub_index_value_prefers_current_value_over_prior_close():
+    """Same nots rule for the sub-indices rows (same payload family)."""
+    adapter = FakeNepseAdapter()
+    adapter.sub_indices = [{
+        "index": "Banking SubIndex",
+        "close": 2100.0,          # prior session close
+        "currentValue": 2088.5,   # live value
+        "change": -11.5,
+        "perChange": -0.55,
+    }]
+    svc = NepseService(client=adapter)
+    subs = await svc.get_sub_indices()
+    assert subs[0].value == 2088.5
+
+
 async def test_closed_market_rows_without_value_fall_back():
     adapter = FakeNepseAdapter()
     adapter.nepse_index = [{"id": 58, "index": "NEPSE Index", "close": None}]

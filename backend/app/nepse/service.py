@@ -263,9 +263,15 @@ class NepseService:
         if chosen is None:
             return None
 
+        # On NEPSE's /api/nots payloads `close` is the PREVIOUS session's
+        # close and `currentValue` is the live value (verified 2026-10-04:
+        # close=2599.15=Oct-1 close, currentValue=2587.25=Oct-2 close,
+        # change=-11.90=currentValue-close). Preferring `close` paired
+        # yesterday's value with today's change - the header then disagreed
+        # with the index-history chart by exactly one session.
         value = _num(
-            chosen.get("close")
-            or chosen.get("currentValue")
+            chosen.get("currentValue")
+            or chosen.get("close")
             or chosen.get("value")
         )
         # 0 (or None) means the session just opened and NEPSE has not seeded
@@ -528,8 +534,9 @@ def _index_summary(point: Any) -> IndexSummary:
         name = str(name)
     return IndexSummary(
         name=name,
-        # Main index payload uses "close"; sub-index payloads use "currentValue".
-        value=_num(get("close") or get("currentValue") or get("value")),
+        # Same nots-payload rule as _extract_nepse_index: currentValue is the
+        # live value; `close` here is the previous session's close.
+        value=_num(get("currentValue") or get("close") or get("value")),
         change=_num(get("change") or get("pointChange")),
         change_percentage=_num(get("perChange") or get("percentageChange")),
     )
