@@ -1,10 +1,11 @@
 /* Market overview: index, session totals, sub-indices, movers, and index chart. */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { market } from "../api";
 import { Card, ErrorState, Loading, Stat } from "../components/ui";
-import { fmtDate, fmtInt, fmtNum, fmtPct, fmtRs, trendClass } from "../format";
+import { fmtDate, fmtInt, fmtNum, fmtPct, fmtRs, fmtSigned, trendClass } from "../format";
+import type { IndexPoint } from "../types";
 
 const RANGES = [
   { label: "1M", days: 30 },
@@ -270,7 +271,7 @@ export function MarketPage() {
         ) : history.error ? (
           <ErrorState error={history.error} onRetry={() => void history.refetch()} />
         ) : (
-          <Sparkline points={(history.data?.history ?? []).map((p) => p.close)} />
+          <Sparkline data={history.data?.history ?? []} />
         )}
         {history.data && (
           <p className="muted">
@@ -281,68 +282,146 @@ export function MarketPage() {
       </Card>
     </div>
   );
-}
+}/**
+ * Index history sparkline with a crosshair hover: the nearest session's date,
+ * close, change vs the previous session, turnover, volume and trades show in
+ * a tooltip while a vertical guide + dot track the line. The old per-point
+ * invisible circles + hidden <title> approach never actually displayed.
+ */
+function Sparkline({ data }: { data: IndexPoint[] }) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
 
-function Sparkline({ points }: { points: (number | null)[] }) {
-  const values = points.filter((p): p is number => p != null);
-  if (values.length < 2) {
+  // Only sessions with a close can sit on the line; keep the rest of the
+  // payload for the tooltip. The API returns newest-first, so sort ascending -
+  // otherwise the line (and its up/down colour) is drawn time-reversed and the
+  // hover "change vs previous session" compares the wrong neighbours.
+  const pts = useMemo(
+    () =>
+      data
+        .filter((p): p is IndexPoint & { close: number } => p.close != null)
+        .slice()
+        .sort((a, b) => (a.business_date ?? "").localeCompare(b.business_date ?? "")),
+    [data],
+  );
+
+  if (pts.length < 2) {
     return <p className="prose">Not enough points in this range to draw a line.</p>;
   }
+
+  const values = pts.map((p) => p.close);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
   const w = 1000;
   const h = 220;
   const step = w / (values.length - 1);
+  const xAt = (i: number) => i * step;
+  const yAt = (v: number) => h - ((v - min) / span) * (h - 20) - 10;
 
   const path = values
-    .map((v, i) => {
-      const x = i * step;
-      const y = h - ((v - min) / span) * (h - 20) - 10;
-      return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
+    .map((v, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`)
     .join(" ");
 
   const rising = values[values.length - 1] >= values[0];
   const stroke = rising ? "var(--up)" : "var(--down)";
 
-  // Generate SVG circle elements for hover tooltips
-  const pointsData = values.map((v, i) => ({
-    x: i * step,
-    y: h - ((v - min) / span) * (h - 20) - 10,
-    value: v,
-    index: i,
-  }));
+  // Map mouse x through the viewBox; preserveAspectRatio="none" keeps the
+  // mapping linear between container pixels and chart coordinates.
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return;
+    const xView = ((e.clientX - rect.left) / rect.width) * w;
+    const i = Math.min(values.length - 1, Math.max(0, Math.round(xView / step)));
+    setHover(i);
+  };
+
+  const hp = hover != null ? pts[hover] : null;
+  const prev = hover != null && hover > 0 ? pts[hover - 1] : null;
+  const chg = hp && prev ? hp.close - prev.close : null;
+  const chgPct = hp && prev && prev.close !== 0 ? (chg! / prev.close) * 100 : null;
+
+  const tipLeft = hover != null ? (xAt(hover) / w) * 100 : 0;
+  const tipTop = hp ? (yAt(hp.close) / h) * 100 : 0;
+  // Flip the box before it runs off the right edge.
+  const flip = tipLeft > 70;
 
   return (
-    <div className="spark">
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="Index close over time">
+    <div className="spark" style={{ position: "relative" }}>
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Index close over time"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+      >
         <path d={path} fill="none" stroke={stroke} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-        {/* Hover points with tooltips */}
-        {pointsData.map((p) => (
-          <g key={p.index}>
-            <circle
-              cx={p.x}
-              cy={p.y}
-              r="6"
-              fill="transparent"
-              stroke="transparent"
-              strokeWidth="10"
-              onMouseEnter={() => {
-                const tooltip = document.getElementById(`spark-tooltip-${p.index}`);
-                if (tooltip) tooltip.style.display = "block";
-              }}
-              onMouseLeave={() => {
-                const tooltip = document.getElementById(`spark-tooltip-${p.index}`);
-                if (tooltip) tooltip.style.display = "none";
-              }}
+        {hover != null && hp && (
+          <g>
+            <line
+              x1={xAt(hover)}
+              x2={xAt(hover)}
+              y1={0}
+              y2={h}
+              stroke="var(--border-strong)"
+              strokeDasharray="4 4"
+              vectorEffect="non-scaling-stroke"
             />
-            <title id={`spark-tooltip-${p.index}`} style={{ display: "none" }}>
-              Value: {fmtNum(p.value)}
-            </title>
+            <circle
+              cx={xAt(hover)}
+              cy={yAt(hp.close)}
+              r="4"
+              fill={stroke}
+              stroke="var(--surface)"
+              strokeWidth="1.5"
+            />
           </g>
-        ))}
+        )}
       </svg>
+      {hover != null && hp && (
+        <div
+          className="spark-tip"
+          style={{
+            left: `${tipLeft}%`,
+            top: `${tipTop}%`,
+            transform: `translate(${flip ? "calc(-100% - 8px)" : "8px"}, -50%)`,
+          }}
+        >
+          <div className="spark-tip-date">{fmtDate(hp.business_date)}</div>
+          <div className="spark-tip-grid">
+            <span>Close</span>
+            <strong>{fmtNum(hp.close)}</strong>
+            {chg != null && (
+              <>
+                <span>Change</span>
+                <span className={trendClass(chg)}>
+                  {fmtSigned(chg)} ({fmtPct(chgPct)})
+                </span>
+              </>
+            )}
+            {hp.turnover != null && (
+              <>
+                <span>Turnover</span>
+                <span>{fmtRs(hp.turnover)}</span>
+              </>
+            )}
+            {hp.volume != null && (
+              <>
+                <span>Volume</span>
+                <span>{fmtInt(hp.volume)}</span>
+              </>
+            )}
+            {hp.total_transactions != null && (
+              <>
+                <span>Trades</span>
+                <span>{fmtInt(hp.total_transactions)}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <div className="spark-axis">
         <span>{fmtNum(min)}</span>
         <span>{fmtNum(max)}</span>
