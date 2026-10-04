@@ -4243,6 +4243,206 @@ def technical_ratings(
     }
 
 
+def technical_ratings_series(
+    bars: Sequence[Bar],
+    ma_periods: Sequence[int] = (10, 20, 30, 50, 100, 200),
+    rsi_period: int = 14,
+    stoch_period: int = 14,
+    stoch_d_period: int = 3,
+    cci_period: int = 20,
+    adx_period: int = 14,
+    awesome_period: int = 5,
+    awesome_slow: int = 34,
+    momentum_period: int = 10,
+    williams_period: int = 14,
+) -> dict[str, list[Optional[float]]]:
+    """Technical Ratings (doc #57) as a per-bar series, aligned with `bars`.
+
+    The single-bar `technical_ratings` evaluates only the last session; the
+    chart projected that scalar onto one point, so the ratings line drew
+    nothing visible. This version computes every component ONCE over the full
+    history (compressed to the valid sessions, then expanded back onto the bar
+    axis) and applies the same per-bar rules, so the ratings plot across the
+    whole window and agree with `technical_ratings` on the last bar.
+
+    Rules (identical to `technical_ratings`):
+    * MA group (12): close vs SMA/EMA at each period -> +1 above, -1 below,
+      0 equal.
+    * Oscillators (8): RSI(14) < 30 and rising / > 70 and falling;
+      Stochastic %K(14,3) < 20 above %D / > 80 below %D; CCI(20) < -100 rising
+      / > 100 falling; ADX(14) > 20 with +DI vs -DI; Awesome Osc > 0 rising /
+      < 0 falling; Momentum(10) sign; MACD(12,26,9) line vs signal;
+      Williams %R(14) < -80 rising / > -20 falling. Rising/falling compare
+      against the previous VALID value, exactly like the single-bar version.
+
+    Returns (aligned with `bars`, None while components are warming up):
+      overall, ma_rating, osc_rating  - mean of the available signals, -1..+1
+      components_used                 - how many of the 20 signals were computable
+    """
+    n = len(bars)
+    overall: list[Optional[float]] = [None] * n
+    ma_rating: list[Optional[float]] = [None] * n
+    osc_rating: list[Optional[float]] = [None] * n
+    components_used: list[int] = [0] * n
+    if n == 0:
+        return {
+            "overall": overall,
+            "ma_rating": ma_rating,
+            "osc_rating": osc_rating,
+            "components_used": components_used,
+        }
+
+    closes = [b.close for b in bars]
+    vc_idx = [i for i, c in enumerate(closes) if c is not None]
+    vc = [closes[i] for i in vc_idx]
+
+    def expand(compressed: Sequence[Optional[float]]) -> list[Optional[float]]:
+        out: list[Optional[float]] = [None] * n
+        for j, i in enumerate(vc_idx):
+            if j < len(compressed):
+                out[i] = compressed[j]
+        return out
+
+    # -- MA group: 12 per-bar signals (SMA + EMA at each period) -------------
+    ma_sigs: list[list[Optional[float]]] = []
+    for period in ma_periods:
+        for ma_fn in (sma_on_valid, ema_on_valid):
+            ma = expand(list(ma_fn(vc, period)))
+            sigs: list[Optional[float]] = [None] * n
+            for i in vc_idx:
+                m, c = ma[i], closes[i]
+                if m is not None and c is not None:
+                    sigs[i] = 1.0 if c > m else (-1.0 if c < m else 0.0)
+            ma_sigs.append(sigs)
+
+    # -- Oscillator group: 8 per-bar signals ---------------------------------
+    vb_idx = [i for i, b in enumerate(bars) if b.has_ohlcv]
+    vb = [bars[i] for i in vb_idx]
+    osc_sigs: list[list[Optional[float]]] = []
+
+    def bar_sigs(compressed: Sequence[Optional[float]], rule) -> list[Optional[float]]:
+        """Expand a compressed oscillator series through its per-bar rule."""
+        sigs: list[Optional[float]] = [None] * n
+        for j in range(len(compressed)):
+            v = compressed[j]
+            if v is None:
+                continue
+            sig = rule(v, compressed[j - 1] if j >= 1 else None)
+            if sig is not None:
+                sigs[vb_idx[j]] = sig
+        return sigs
+
+    # RSI: <30 and rising -> +1, >70 and falling -> -1 (needs a previous value).
+    rsi_vals = rsi_on_valid(vc, rsi_period)
+    rsi_sigs: list[Optional[float]] = [None] * n
+    for j in range(1, len(rsi_vals)):
+        cur, prev = rsi_vals[j], rsi_vals[j - 1]
+        if cur is not None and prev is not None:
+            rsi_sigs[vc_idx[j]] = (
+                1.0 if (cur < 30 and cur > prev) else (-1.0 if (cur > 70 and cur < prev) else 0.0)
+            )
+    osc_sigs.append(rsi_sigs)
+
+    # Stochastic %K vs %D (no previous value needed).
+    k_vals, d_vals = stochastic(vb, stoch_period, stoch_d_period)
+    stoch_sigs: list[Optional[float]] = [None] * n
+    for j in range(min(len(vb_idx), len(k_vals), len(d_vals))):
+        k, d = k_vals[j], d_vals[j]
+        if k is not None and d is not None:
+            stoch_sigs[vb_idx[j]] = 1.0 if (k < 20 and k > d) else (-1.0 if (k > 80 and k < d) else 0.0)
+    osc_sigs.append(stoch_sigs)
+
+    # CCI: <-100 and rising / >100 and falling (previous valid value).
+    cci_vals = cci(vb, cci_period)
+    osc_sigs.append(
+        bar_sigs(
+            cci_vals,
+            lambda cur, prev: (
+                None
+                if prev is None
+                else (1.0 if (cur < -100 and cur > prev) else (-1.0 if (cur > 100 and cur < prev) else 0.0))
+            ),
+        )
+    )
+
+    # ADX: > 20 with +DI above / below -DI (needs enough bars, like the single-bar version).
+    adx_sigs: list[Optional[float]] = [None] * n
+    if len(vb) > adx_period:
+        plus_di, minus_di, _dx, adx_vals = adx(vb, adx_period)
+        for j in range(min(len(vb_idx), len(adx_vals))):
+            a = adx_vals[j]
+            p = plus_di[j] if j < len(plus_di) else None
+            m = minus_di[j] if j < len(minus_di) else None
+            if a is not None and p is not None and m is not None:
+                adx_sigs[vb_idx[j]] = (
+                    1.0 if (a > 20 and p > m) else (-1.0 if (a > 20 and p < m) else 0.0)
+                )
+    osc_sigs.append(adx_sigs)
+
+    # Awesome Oscillator: > 0 and rising / < 0 and falling (previous valid value).
+    ao_vals = awesome_oscillator(vb, awesome_period, awesome_slow)
+    osc_sigs.append(
+        bar_sigs(
+            ao_vals,
+            lambda cur, prev: (
+                None
+                if prev is None
+                else (1.0 if (cur > 0 and cur > prev) else (-1.0 if (cur < 0 and cur < prev) else 0.0))
+            ),
+        )
+    )
+
+    # Momentum: sign of the raw momentum (no previous value needed).
+    mom_vals = momentum(vc, momentum_period)
+    mom_sigs: list[Optional[float]] = [None] * n
+    for j, v in enumerate(mom_vals):
+        if v is not None:
+            mom_sigs[vc_idx[j]] = 1.0 if v > 0 else (-1.0 if v < 0 else 0.0)
+    osc_sigs.append(mom_sigs)
+
+    # MACD: line vs signal (no previous value needed).
+    macd_line, macd_sig, _hist = macd_on_valid(vc)
+    macd_sigs: list[Optional[float]] = [None] * n
+    for j in range(min(len(vc_idx), len(macd_line), len(macd_sig))):
+        line, sig = macd_line[j], macd_sig[j]
+        if line is not None and sig is not None:
+            macd_sigs[vc_idx[j]] = 1.0 if line > sig else (-1.0 if line < sig else 0.0)
+    osc_sigs.append(macd_sigs)
+
+    # Williams %R: < -80 and rising / > -20 and falling (previous valid value).
+    wr_vals = williams_r(vb, williams_period)
+    osc_sigs.append(
+        bar_sigs(
+            wr_vals,
+            lambda cur, prev: (
+                None
+                if prev is None
+                else (1.0 if (cur < -80 and cur > prev) else (-1.0 if (cur > -20 and cur < prev) else 0.0))
+            ),
+        )
+    )
+
+    # -- Aggregate per bar: mean of the available signals --------------------
+    for i in range(n):
+        ma_used = [s for s in (sig[i] for sig in ma_sigs) if s is not None]
+        osc_used = [s for s in (sig[i] for sig in osc_sigs) if s is not None]
+        all_used = ma_used + osc_used
+        components_used[i] = len(all_used)
+        if ma_used:
+            ma_rating[i] = sum(ma_used) / len(ma_used)
+        if osc_used:
+            osc_rating[i] = sum(osc_used) / len(osc_used)
+        if all_used:
+            overall[i] = sum(all_used) / len(all_used)
+
+    return {
+        "overall": overall,
+        "ma_rating": ma_rating,
+        "osc_rating": osc_rating,
+        "components_used": components_used,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helper functions for timeframe aggregation (used by chart endpoint)
 # ---------------------------------------------------------------------------

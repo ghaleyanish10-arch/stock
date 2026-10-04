@@ -20,6 +20,13 @@ from app.analytics.indicators import (
     williams_r,
 )
 
+# The per-bar variant lives in indicators.py next to the single-bar original
+# (one implementation, two import paths); re-exported here so callers of this
+# module get both.
+from app.analytics.indicators import (  # noqa: F401
+    technical_ratings_series,
+)
+
 
 def technical_ratings(
     bars: Sequence[Bar],

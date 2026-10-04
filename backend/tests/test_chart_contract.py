@@ -44,9 +44,15 @@ FRONTEND_REGISTRY = Path(__file__).resolve().parents[2] / "frontend" / "src" / "
 
 def _frontend_tokens() -> list[str]:
     text = FRONTEND_REGISTRY.read_text(encoding="utf-8")
+    # Strip /* */ comments first: a `;` inside a comment ("handlers exist; the
+    # picker...") used to truncate the non-greedy union match, silently
+    # dropping the 8 batch-B tokens from this sweep and the health script.
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     union = re.search(r"export type IndicatorToken =(.*?);", text, re.S)
     assert union, "IndicatorToken union not found in indicators.ts"
-    return re.findall(r'"([a-z0-9_]+)"', union.group(1))
+    tokens = re.findall(r'"([a-z0-9_]+)"', union.group(1))
+    assert len(tokens) >= 105, f"registry unexpectedly small: {len(tokens)}"
+    return tokens
 
 
 def _make_session(n_bars: int = 320):
@@ -171,6 +177,40 @@ def test_compare_family_disabled_reason_without_partner(client):
     body2 = _chart(client, "ratio", compare="TEST2")
     # TEST2 has no bars: still 200, and the honest reason stays.
     assert "ratio" in body2["disabled"] or body2["indicators"].get("ratio")
+
+
+def test_compare_token_with_partner_emits_series(client):
+    """Regression: the endpoint's `compare` Query parameter shadowed the
+    imported compare() function, so with a partner passed the token died with
+    ``TypeError: 'str' object is not callable`` and served nothing - while the
+    no-partner path (a disabled reason) kept the registry-wide test green.
+    Self-compare TEST against itself: the rebased line is 100 everywhere.
+    tf="D" pins daily bars - ALL+auto collapses to weekly (~65 buckets),
+    which would make the >100 daily-values assertion flaky-by-design."""
+    body = _chart(client, "compare", compare="TEST", tf="D")
+    assert "compare" in body["indicators"], body.get("disabled")
+    vals = [v for v in body["indicators"]["compare"] if v is not None]
+    assert vals, "compare series with a partner must produce values"
+    # Doc #52 semantics: series B is rebased to 100 at its first common value.
+    assert abs(vals[0] - 100.0) < 1e-9
+    assert all(v > 0 for v in vals)
+    assert len(vals) > 100
+
+
+def test_technical_ratings_draws_across_the_window(client):
+    """Regression: tech_* used to be a single-point projection (the latest
+    bar only) - a line the chart cannot draw, i.e. an indicator that existed
+    but was never shown. The per-bar series must cover the window."""
+    body = _chart(client, "technical_ratings")
+    dates = body["series"]["dates"]
+    for key in ("tech_overall", "tech_ma_rating", "tech_osc_rating"):
+        series = body["indicators"][key]
+        assert len(series) == len(dates)
+        vals = [v for v in series if v is not None]
+        assert len(vals) > 50, f"{key}: still effectively single-point ({len(vals)} values)"
+        first = next(i for i, v in enumerate(series) if v is not None)
+        assert all(v is None for v in series[:first]), f"{key}: zeros before first valid index"
+        assert all(-1.0001 <= v <= 1.0001 for v in vals), f"{key}: rating outside -1..+1"
 
 
 def test_vol_index_disabled_by_design(client):

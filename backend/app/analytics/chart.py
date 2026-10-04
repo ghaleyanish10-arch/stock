@@ -129,12 +129,15 @@ from app.analytics.indicators import (
     correlation_log,
     ratio,
     spread,
-    compare,
+    # Aliased: the endpoint's `compare` Query parameter would otherwise shadow
+    # the function inside this scope (the compare token 500-ed with
+    # "'str' object is not callable" exactly because of that shadowing).
+    compare as compare_series,
     median_price,
     typical_price,
     price_channel,
     force_index,
-    technical_ratings,
+    technical_ratings_series,
     roc,
     vwma,
     vortex,
@@ -676,6 +679,13 @@ async def chart(
     # Compute-series aliases (full history through the window's last bar).
     w_closes = compute_closes
     dates_w = compute_dates
+    # Cross-symbol alignment keys (compare family): a bucket's LAST SESSION
+    # date always exists in the daily close map, whatever the bar label mode
+    # says - period_start labels are calendar Mondays that are not session
+    # dates, so aligning by label silently dropped the first bucket (and any
+    # holiday-Monday week) from correlation/ratio/spread/compare. Under D the
+    # label IS the session date.
+    align_dates = last_session_dates[:compute_end] if applied_tf != "D" else dates_w
     if "sma_20" in wanted:
         out_indicators["sma_20"] = sma_on_valid(w_closes, 20)
     if "ema_20" in wanted:
@@ -977,11 +987,11 @@ async def chart(
         else:
             corr_pairs_idx = [
                 i
-                for i, d in enumerate(dates_w)
+                for i, d in enumerate(align_dates)
                 if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
             ]
             corr_a = [w_closes[i] for i in corr_pairs_idx]  # type: ignore[misc]
-            corr_b = [compare_closes_by_date[dates_w[i]] for i in corr_pairs_idx]
+            corr_b = [compare_closes_by_date[align_dates[i]] for i in corr_pairs_idx]
             corr_vals = correlation(corr_a, corr_b, 20)
             corr_aligned: list[Optional[float]] = [None] * len(dates_w)
             for pos, i in enumerate(corr_pairs_idx):
@@ -998,11 +1008,11 @@ async def chart(
         else:
             corr_pairs_idx = [
                 i
-                for i, d in enumerate(dates_w)
+                for i, d in enumerate(align_dates)
                 if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
             ]
             corr_a = [w_closes[i] for i in corr_pairs_idx]  # type: ignore[misc]
-            corr_b = [compare_closes_by_date[dates_w[i]] for i in corr_pairs_idx]
+            corr_b = [compare_closes_by_date[align_dates[i]] for i in corr_pairs_idx]
             corr_vals = correlation_log(corr_a, corr_b, 20)
             corr_aligned: list[Optional[float]] = [None] * len(dates_w)
             for pos, i in enumerate(corr_pairs_idx):
@@ -1018,11 +1028,11 @@ async def chart(
         else:
             ratio_pairs_idx = [
                 i
-                for i, d in enumerate(dates_w)
+                for i, d in enumerate(align_dates)
                 if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
             ]
             ratio_a = [w_closes[i] for i in ratio_pairs_idx]  # type: ignore[misc]
-            ratio_b = [compare_closes_by_date[dates_w[i]] for i in ratio_pairs_idx]
+            ratio_b = [compare_closes_by_date[align_dates[i]] for i in ratio_pairs_idx]
             ratio_vals = ratio(ratio_a, ratio_b)
             ratio_aligned: list[Optional[float]] = [None] * len(dates_w)
             for pos, i in enumerate(ratio_pairs_idx):
@@ -1038,11 +1048,11 @@ async def chart(
         else:
             spread_pairs_idx = [
                 i
-                for i, d in enumerate(dates_w)
+                for i, d in enumerate(align_dates)
                 if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
             ]
             spread_a = [w_closes[i] for i in spread_pairs_idx]  # type: ignore[misc]
-            spread_b = [compare_closes_by_date[dates_w[i]] for i in spread_pairs_idx]
+            spread_b = [compare_closes_by_date[align_dates[i]] for i in spread_pairs_idx]
             spread_vals = spread(spread_a, spread_b)
             spread_aligned: list[Optional[float]] = [None] * len(dates_w)
             for pos, i in enumerate(spread_pairs_idx):
@@ -1058,12 +1068,12 @@ async def chart(
         else:
             compare_pairs_idx = [
                 i
-                for i, d in enumerate(dates_w)
+                for i, d in enumerate(align_dates)
                 if w_closes[i] is not None and compare_closes_by_date.get(d) is not None
             ]
             compare_a = [w_closes[i] for i in compare_pairs_idx]  # type: ignore[misc]
-            compare_b = [compare_closes_by_date[dates_w[i]] for i in compare_pairs_idx]
-            compare_vals = compare(compare_a, compare_b, "rebase")
+            compare_b = [compare_closes_by_date[align_dates[i]] for i in compare_pairs_idx]
+            compare_vals = compare_series(compare_a, compare_b, "rebase")
             compare_aligned: list[Optional[float]] = [None] * len(dates_w)
             for pos, i in enumerate(compare_pairs_idx):
                 compare_aligned[i] = compare_vals[pos]
@@ -1082,16 +1092,14 @@ async def chart(
     if "force_index" in wanted:
         out_indicators["force_index_13"] = force_index(bars, 13)
     if "technical_ratings" in wanted:
-        tr = technical_ratings(bars)
-        # The ratings function returns scalars per component; project them onto
-        # the shared date axis as one-value series (latest only) so the chart
-        # can draw them like any other line.
-        def _tr_series(v: Optional[float]) -> list[Optional[float]]:
-            return [v if i == len(dates_w) - 1 else None for i in range(len(dates_w))]
-
-        out_indicators["tech_overall"] = _tr_series(tr["overall"])
-        out_indicators["tech_ma_rating"] = _tr_series(tr["ma_rating"])
-        out_indicators["tech_osc_rating"] = _tr_series(tr["osc_rating"])
+        # Per-bar composite (doc #57). The single-bar projection put one point
+        # on the last bar - a line the chart could not draw ("indicator exists
+        # but is not shown"). The series version rates every bar, so the line
+        # plots across the whole window like any other indicator.
+        trs = technical_ratings_series(bars)
+        out_indicators["tech_overall"] = trs["overall"]
+        out_indicators["tech_ma_rating"] = trs["ma_rating"]
+        out_indicators["tech_osc_rating"] = trs["osc_rating"]
 
     # -- warm-up report, then slice to the window ----------------------------
     # Every series above is index-aligned with compute_dates. A requested token

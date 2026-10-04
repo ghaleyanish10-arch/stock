@@ -1246,3 +1246,64 @@ class TestForceIndex:
         ]
         out = force_index(bars, 2)
         assert out[1] is None
+
+
+# ---------------------------------------------------------------------------
+# Technical Ratings as a per-bar series (doc #57)
+# ---------------------------------------------------------------------------
+
+
+class TestTechnicalRatingsSeries:
+    def _legs(self, n=260):
+        # Two 40-bar legs repeated: real ups AND downs, so oscillator rules
+        # with a rising/falling condition are exercised on both sides.
+        bars = []
+        px = 100.0
+        for i in range(n):
+            drift = 0.6 if (i % 40) < 20 else -0.6
+            o = px
+            c = px + drift
+            px = c
+            bars.append(bar(o, max(o, c) + 0.5, min(o, c) - 0.5, c, 1000.0 + i, f"2025-{1 + i // 28:02d}-{1 + i % 28:02d}"))
+        return bars
+
+    def test_alignment_warmup_and_range(self):
+        from app.analytics.indicators import technical_ratings_series
+
+        bars = self._legs()
+        out = technical_ratings_series(bars)
+        for key in ("overall", "ma_rating", "osc_rating"):
+            assert len(out[key]) == len(bars), f"{key} must align with bars"
+            assert all(v is None or -1.0 <= v <= 1.0 for v in out[key])
+        # Momentum(10) is the earliest computable component: first value at
+        # index 9 (needs 10 closes); nothing before it, and no fabricated zeros.
+        first = next(i for i, v in enumerate(out["overall"]) if v is not None)
+        assert first == 9
+        assert all(v is None for v in out["overall"][:first])
+        # Every MA(10..200) and all 8 oscillators are computable by the end.
+        assert out["components_used"][-1] == 20
+
+    def test_last_bar_matches_single_bar_function(self):
+        from app.analytics.indicators import technical_ratings, technical_ratings_series
+
+        bars = self._legs()
+        single = technical_ratings(bars)
+        series = technical_ratings_series(bars)
+        # Same rules, same inputs: the series' last bar IS the single-bar value.
+        assert series["overall"][-1] == single["overall"]
+        assert series["ma_rating"][-1] == single["ma_rating"]
+        assert series["osc_rating"][-1] == single["osc_rating"]
+
+    def test_strong_trend_ma_group_is_saturated(self):
+        from app.analytics.indicators import technical_ratings_series
+
+        up = [bar(100.0 + i, 101.0 + i, 99.0 + i, 100.5 + i) for i in range(260)]
+        down = [bar(260.0 - i, 261.0 - i, 259.0 - i, 259.5 - i) for i in range(260)]
+        up_out = technical_ratings_series(up)
+        down_out = technical_ratings_series(down)
+        # A close above every SMA/EMA of a strictly rising series: all 12 MA
+        # signals +1 (and -1 on the way down) once all periods have warmed up.
+        assert up_out["ma_rating"][-1] == 1.0
+        assert down_out["ma_rating"][-1] == -1.0
+        assert up_out["overall"][-1] > 0
+        assert down_out["overall"][-1] < 0
