@@ -180,7 +180,8 @@ export function MarketPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", textAlign: "right" }}>
                     {g.ltp != null && <span className="muted" style={{ fontSize: "var(--text-sm)" }}>{fmtNum(g.ltp)}</span>}
                     <span className={`badge badge-up`} style={{ fontSize: "var(--text-xs)" }}>
-                      {g.percentage_change != null ? `+${fmtPct(g.percentage_change)}%` : "+"}
+                      {/* fmtPct already emits the sign and %: manual +/% around it made "++2.00%%". */}
+                      {g.percentage_change != null ? fmtPct(g.percentage_change) : "+"}
                     </span>
                   </div>
                 </div>
@@ -217,7 +218,7 @@ export function MarketPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", textAlign: "right" }}>
                     {l.ltp != null && <span className="muted" style={{ fontSize: "var(--text-sm)" }}>{fmtNum(l.ltp)}</span>}
                     <span className={`badge badge-down`} style={{ fontSize: "var(--text-xs)" }}>
-                      {l.percentage_change != null ? `${fmtPct(l.percentage_change)}%` : "-"}
+                      {l.percentage_change != null ? fmtPct(l.percentage_change) : "-"}
                     </span>
                   </div>
                 </div>
