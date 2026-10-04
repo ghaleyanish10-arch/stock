@@ -14,7 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { analytics } from "../api";
 import type { PeriodKey, SizeMetric, TreemapTile } from "../types";
 import { changeColor, groupBy, isTooSmall, type LaidOutTile } from "../treemap";
-import { fmtNum, fmtPct, fmtRs } from "../format";
+import { fmtNum, fmtPct, fmtRs, fmtInt } from "../format";
 import { Card, EmptyState, ErrorState, Loading } from "../components/ui";
 
 /** A null cell that always shows *why* it is null, never a bare dash. */
@@ -57,6 +57,7 @@ export function MarketMapPage() {
   const [fullscreen, setFullscreen] = useState(false);
   const [find, setFind] = useState("");
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 900, h: 560 });
+  const [detailTile, setDetailTile] = useState<Tile | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
 
   const period = (params.get("period") as PeriodKey) || "1M";
@@ -242,6 +243,49 @@ export function MarketMapPage() {
         </span>
       </div>
 
+      {detailTile && (
+        <div className="map-detail">
+          <Card title={`${detailTile.symbol} — ${detailTile.name ?? "—"}`}>
+            <div className="detail-grid">
+              <div className="detail-item">
+                <span className="detail-label">Sector</span>
+                <span className="detail-value">{detailTile.sector ?? "—"}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">{SIZES.find((s) => s.value === metric)?.label}</span>
+                <span className="detail-value">{metric === "turnover" ? fmtRs(detailTile.size) : fmtNum(detailTile.size, 0)}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">{PERIODS.find((p) => p.value === period)?.label} return</span>
+                <span className={`detail-value ${(detailTile.change_pct ?? 0) >= 0 ? "up" : "down"}`}>
+                  {detailTile.change_pct != null ? fmtPct(detailTile.change_pct) : <Missing reason="Not computable" />}
+                </span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">LTP</span>
+                <span className="detail-value">{detailTile.ltp != null ? fmtNum(detailTile.ltp) : <Missing reason="N/A" />}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Volume</span>
+                <span className="detail-value">{detailTile.volume != null ? fmtInt(detailTile.volume) : <Missing reason="N/A" />}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Turnover</span>
+                <span className="detail-value">{detailTile.turnover != null ? fmtRs(detailTile.turnover) : <Missing reason="N/A" />}</span>
+              </div>
+            </div>
+            <div className="detail-actions">
+              <button className="btn btn-primary" onClick={() => navigate(`/chart/${detailTile.symbol}`)}>
+                Open chart
+              </button>
+              <button className="btn btn-secondary" onClick={() => setDetailTile(null)}>
+                Close
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
       {isLoading && <Loading label="Building the market map" />}
       {error && <ErrorState error={error} />}
 
@@ -275,7 +319,7 @@ export function MarketMapPage() {
                 groups={groups}
                 period={period}
                 legendMax={legendMax}
-                onPick={(symbol) => navigate(`/chart/${symbol}`)}
+                onPick={(tile) => setDetailTile(tile)}
               />
             ) : (
               <PieView
@@ -359,7 +403,7 @@ function TreemapView({
   groups: Group[];
   period: PeriodKey;
   legendMax: number;
-  onPick: (symbol: string) => void;
+  onPick: (tile: Tile) => void;
 }) {
   if (groups.length === 0) {
     return (
@@ -400,11 +444,11 @@ function TreemapView({
                 aria-label={`${tile.item.symbol}, ${tile.item.name ?? "no name"}, ${fmtPct(
                   tile.item.change_pct,
                 )}`}
-                onClick={() => onPick(tile.item.symbol)}
+                onClick={() => onPick(tile.item)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    onPick(tile.item.symbol);
+                    onPick(tile.item);
                   }
                 }}
               >

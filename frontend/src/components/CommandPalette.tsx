@@ -26,7 +26,6 @@ const PAGES: { to: string; label: string; hint: string }[] = [
   { to: "/securities", label: "Securities", hint: "Security master" },
   { to: "/brokers", label: "Brokers", hint: "Official member registry" },
   { to: "/funds", label: "Funds", hint: "Mutual funds and NAV status" },
-  { to: "/treemap", label: "Heatmap", hint: "Treemap and sector breakdown" },
   { to: "/screener", label: "Screener", hint: "Filter price, volume, technicals" },
   { to: "/signin", label: "Sign in", hint: "Create or open an account" },
 ];

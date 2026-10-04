@@ -434,6 +434,8 @@ export interface TreemapTile {
   change_pct: number;
   ltp: number | null;
   market_cap: number | null;
+  volume: number | null;
+  turnover: number | null;
 }
 
 export interface SectorSlice {

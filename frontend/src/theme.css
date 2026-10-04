@@ -196,3 +196,48 @@
   --down: #3fbf7f;
   --down-soft: #12251b;
 }
+
+/* -- market map detail panel ------------------------------------------------ */
+.map-detail {
+  margin-top: var(--space-4);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.detail-label {
+  font-size: var(--text-xs);
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.detail-value {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-value.up {
+  color: var(--up);
+}
+
+.detail-value.down {
+  color: var(--down);
+}
+
+.detail-actions {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}

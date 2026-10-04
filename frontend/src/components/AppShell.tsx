@@ -19,7 +19,6 @@ const NAV = [
     group: "Market",
     items: [
       { to: "/", label: "Overview", end: true },
-      { to: "/treemap", label: "Heatmap" },
       { to: "/movers", label: "Movers" },
       { to: "/stocks", label: "Stocks" },
     ],
