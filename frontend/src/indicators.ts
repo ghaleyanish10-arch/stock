@@ -169,6 +169,9 @@ export interface IndicatorDef {
   /** Needs a second symbol via `compare=`; the backend reports the exact
    * reason and the legend surfaces it. */
   needsCompare?: boolean;
+  /** Optional per-bar event key (±1 cross markers) drawn as arrows on the
+   * price pane - e.g. the cross families emit `*_signal` next to fast/slow. */
+  signal?: IndicatorKey;
 }
 
 /** Selectable indicators, in picker order. */
@@ -423,6 +426,7 @@ export const INDICATORS: IndicatorDef[] = [
     pane: "overlay",
     series: ["ema_cross_fast", "ema_cross_slow"],
     colors: { ema_cross_fast: "#f48fb1", ema_cross_slow: "#9575cd" },
+    signal: "ema_cross_signal",
     desc: "Fast EMA(9) against slow EMA(21): fast crossing up marks bullish momentum, crossing down bearish; whipsaws in sideways markets.",
   },
   {
@@ -433,6 +437,7 @@ export const INDICATORS: IndicatorDef[] = [
     pane: "overlay",
     series: ["ma_cross_fast", "ma_cross_slow"],
     colors: { ma_cross_fast: "#80cbc4", ma_cross_slow: "#a1887f" },
+    signal: "ma_cross_signal",
     desc: "Fast SMA(9) against slow SMA(21) - the classic crossover trend signal, slower to react than the EMA version.",
   },
   {
@@ -443,6 +448,7 @@ export const INDICATORS: IndicatorDef[] = [
     pane: "overlay",
     series: ["ma_ema_cross_fast", "ma_ema_cross_slow"],
     colors: { ma_ema_cross_fast: "#ce93d8", ma_ema_cross_slow: "#90caf9" },
+    signal: "ma_ema_cross_signal",
     desc: "SMA(9) against EMA(21): mixes a flat-weighted and a recency-weighted average, so crosses confirm when both views of trend agree.",
   },
   { key: "ama", token: "ama", label: "Adaptive MA 9", color: "#26a69a", pane: "overlay", series: ["ama_9"], desc: "Kaufman's Adaptive MA (9/2/30) - smoothing speed follows the efficiency ratio, hugging trends and going flat in chop." },

@@ -49,6 +49,8 @@ import {
   ChartOptions,
   MouseEventParams,
   LineSeriesOptions,
+  SeriesMarker,
+  createSeriesMarkers,
 } from "lightweight-charts";
 import type { ChartResponse, ChartSeries, IndicatorKey } from "../types";
 import { INDICATORS, INDICATOR_COLORS, DEFAULT_SELECTION, selectedToParam } from "../indicators";
@@ -634,6 +636,36 @@ export function TechnicalChart({
     for (const { key, api } of overlays) {
       api.setData(toLineData(times, indicators[key] ?? []));
     }
+
+    // Cross-family arrow markers: the `*_signal` payload keys carry +1 on the
+    // bullish-cross bar and -1 on the bearish one (None elsewhere), which are
+    // events, not lines - so they draw as arrows on the price pane instead of
+    // disappearing ("indicator exists but is never shown").
+    const crossMarkers: SeriesMarker<UTCTimestamp>[] = [];
+    for (const def of overlayDefs) {
+      const sigKey = def.signal;
+      if (!sigKey) continue;
+      const sig = indicators[sigKey];
+      if (!sig) continue;
+      const mColor = def.colors?.[sigKey] ?? def.color;
+      for (let i = 0; i < sig.length && i < n; i++) {
+        const v = sig[i];
+        if (isMissing(v) || v === 0) continue;
+        const up = v! > 0;
+        crossMarkers.push({
+          time: times[i],
+          position: up ? "belowBar" : "aboveBar",
+          shape: up ? "arrowUp" : "arrowDown",
+          color: mColor,
+          text: up ? "▲" : "▼",
+          size: 1,
+        });
+      }
+    }
+    // Multiple cross defs interleave their bars; the markers primitive
+    // requires chronological order.
+    crossMarkers.sort((a, b) => (a.time as number) - (b.time as number));
+    createSeriesMarkers(candleSeries, crossMarkers);
     if (rsiSeries) rsiSeries.setData(toLineData(times, indicators.rsi_14 ?? []));
     if (macdSeries && macdSignalSeries && macdHistSeries) {
       macdSeries.setData(toLineData(times, indicators.macd ?? []));
@@ -960,8 +992,6 @@ function loadSelected(symbol: string): IndicatorId[] {
   return DEFAULT_SELECTION;
 }
 
-const MAX_ACTIVE = 12;
-
 const RANGES = ["1W", "1M", "3M", "6M", "YTD", "1Y", "ALL"] as const;
 const DEFAULT_RANGE = "3M";
 
@@ -1065,7 +1095,6 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
     return () => window.removeEventListener(COLOR_RULE_EVENT, onRule);
   }, []);
   const [chipHidden, setChipHidden] = useState(false);
-  const [capNotice, setCapNotice] = useState<string | null>(null);
 
   // Selection is per symbol (D2): each ticker remembers its own mix.
   useEffect(() => {
@@ -1107,16 +1136,14 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
   useEffect(() => setChipHidden(false), [symbol, range]);
 
   const toggle = (id: IndicatorId) => {
-    setSelected((prev) => {
-      if (prev.includes(id)) return prev.filter((k) => k !== id);
-      if (prev.length >= MAX_ACTIVE) {
-        setCapNotice(`At most ${MAX_ACTIVE} indicators at once - remove one first.`);
-        return prev;
-      }
-      setCapNotice(null);
-      return [...prev, id];
-    });
+    setSelected((prev) => (prev.includes(id) ? prev.filter((k) => k !== id) : [...prev, id]));
   };
+  // The old 12-indicator cap hid most of the registry behind a notice; the
+  // backend serves the full 108-token request in one call (verified by the
+  // health sweep), so the picker now offers All/None and lets the user pick
+  // everything. Rendering stays sane via per-pane grouping.
+  const selectAll = () => setSelected(INDICATORS.map((d) => d.key));
+  const selectNone = () => setSelected([]);
 
   const customDates = !!(fromDate || toDate);
   const effRange = customDates ? "ALL" : range;
@@ -1315,6 +1342,22 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           />
         </label>
         <div className="picker tc-picker" role="group" aria-label="Chart indicators">
+          <button
+            type="button"
+            className="picker-chip"
+            onClick={selectAll}
+            title="Enable every registered indicator"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className="picker-chip"
+            onClick={selectNone}
+            title="Clear all indicators"
+          >
+            None
+          </button>
           {INDICATORS.map((def) => {
             const on = selected.includes(def.key);
             return (
@@ -1331,15 +1374,6 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           })}
         </div>
       </div>
-
-      {capNotice && (
-        <div className="tc-cap-notice" role="status">
-          {capNotice}
-          <button type="button" aria-label="Dismiss" onClick={() => setCapNotice(null)}>
-            ×
-          </button>
-        </div>
-      )}
 
       {query.isLoading && <div className="tc-skeleton" aria-hidden="true" />}
       {query.error && (
