@@ -58,10 +58,10 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| H1 Daily timeframe | ✅ done | All 100 tokens healthy for all 4 symbols |
-| H2 Weekly timeframe | ⚠️ expected | 8 tokens flagged (insufficient weekly bars for long-lookback indicators) |
-| H3 Monthly timeframe | ⚠️ expected | 63+ tokens flagged (insufficient monthly bars) |
-| H4 Results written to docs/indicator-health.md | ✅ done | Grouped by symbol and timeframe |
+| H1 Daily timeframe | ✅ done | All 108 tokens healthy for all 4 symbols (batch-B tokens included since the parser fix) |
+| H2 Weekly timeframe | ✅ done | 108/108 healthy; long-lookback all-nulls are reported warm-ups (short weekly archive), not breakage |
+| H3 Monthly timeframe | ✅ done | 108/108 healthy; same warm-up rule (AHL has only ~14 monthly buckets) |
+| H4 Results written to docs/indicator-health.md | ✅ done | Regenerated 2026-10-04; script sweeps all 108 tokens (comment-stripped union regex) |
 
 ## J. Docs & progress
 
@@ -85,3 +85,26 @@ Branch: `fix/chart-indicators-colors`. Working symbol: **AHL** (verified).
 1. Paste NEPSE's daily table for AHL 2026-06-30→09-30 for `/dev/chart-parity?symbol=AHL&range=3M` row-by-row parity
 2. Provide three NEPSE weekly AHL candle hover tooltips for aggregation verification
 3. Confirm NEPSE's gap-day colour rule (prev_close vs open)
+
+## K. "Use all indicators" + fix everything not shown (2026-10-04)
+
+| Item | Status | Tests | Commit |
+| --- | --- | --- | --- |
+| K1 `compare` token dead (Query param shadowed the fn → TypeError, empty series, no reason) | ✅ fixed | contract: compare-with-partner regression (pins tf=D) | d025969 |
+| K2 `technical_ratings` drew a single invisible point | ✅ fixed | contract draws-across-window + 3 batch-B series tests (251/260 non-null on fixture, last bar == single-bar fn) | d025969 |
+| K3 compare family dropped first bucket + holiday-Monday weeks on W/M (label-vs-session-date mismatch) | ✅ fixed | hand-computed weekly rebase 100×107/102 = 104.90196 | d025969 |
+| K4 health sweep truncated at 100 tokens (`;` inside a comment) | ✅ fixed | contract parser strips comments (≥105 tokens) | d025969 |
+| K5 sweep flagged reported warm-ups as broken | ✅ fixed | sweep consults payload `warm_up` reasons like the contract test | d025969 |
+| K6 picker capped at 12 indicators ("use all the indicators") | ✅ fixed | All/None buttons; 108/108 selectable; live AHL: 8 panes / 171 series | d9ffd19 |
+| K7 cross `*_signal` events never drawn | ✅ fixed | arrowUp/arrowDown markers on the price pane for ema/ma/ma_ema cross | d9ffd19 |
+
+## L. Indicator working/not-working report (2026-10-04)
+
+Full per-token detail: `docs/indicator-health.md` (108 tokens × AHL/ANLB/NHPC/BNT × D/W/M). Summary:
+
+- **Working and drawn (108/108 tokens):** every token now returns HTTP 200 with either non-null series or an honest reason. Daily timeframe: 0 flags across all 4 symbols. The 8 batch-B tokens (median_price, typical_price, price_channel, correlation_log, ratio, spread, compare, technical_ratings) were invisible until this session — two were genuinely broken (K1, K2), the sweep missed the rest.
+- **Correctly not drawn (warm-up, by design):** long-lookback indicators on W/M where the archive is shorter than the lookback — e.g. AHL monthly (~14 buckets) leaves SMA20+, RSI, MACD, BB null, and weekly leaves TEMA/linreg_curve_100 null. The legend shows the backend's warm-up reason; values are never faked as zero.
+- **Not applicable by design (1):** `vol_index` — NEPSE publishes no options/derivatives data; backend reports it disabled rather than faking values.
+- **Needs a partner (5):** correlation, correlation_log, ratio, spread, compare — work with `compare=SYM` (the sweep pairs AHL↔NHPC); they carry a disabled reason without one.
+- **Events, not lines (3):** ema_cross/ma_cross/ma_ema_cross `*_signal` now draw as arrows (K7); the fast/slow lines were always drawn.
+- **Shape-dependent (3):** fractal_low/hi and zigzag need real local extremes; on monotone fixture legs they are legitimately empty (live data confirms they populate).
