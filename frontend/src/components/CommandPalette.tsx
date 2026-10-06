@@ -21,6 +21,7 @@ const PAGES: { to: string; label: string; hint: string }[] = [
   { to: "/", label: "Market overview", hint: "Index, turnover, session totals" },
   { to: "/movers", label: "Movers", hint: "Top gainers and losers" },
   { to: "/stocks", label: "Stocks", hint: "All traded instruments" },
+  { to: "/map", label: "Heatmap", hint: "Treemap and sector breakdown" },
   { to: "/archive", label: "Archive", hint: "Stored history and coverage" },
   { to: "/analytics", label: "Technical", hint: "Indicators for a symbol" },
   { to: "/securities", label: "Securities", hint: "Security master" },
