@@ -81,6 +81,7 @@ from app.analytics.indicators import (
     price_oscillator,
     rci,
     relative_volatility_index,
+    relative_strength,
     envelopes,
     mass_index,
     smi_ergodic,
@@ -1123,7 +1124,7 @@ async def chart(
             )
         else:
             stock_closes = {
-                d: closes_w[i] if i < len(closes_w) else None
+                d: compute_closes[i] if i < len(compute_closes) else None
                 for i, d in enumerate(dates_w)
             }
             rs_helper = relative_strength(stock_closes, compare_closes_by_date)

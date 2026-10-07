@@ -3873,6 +3873,74 @@ def spread(
     return out
 
 
+def relative_strength(
+    stock_closes: dict[str, Optional[float]],
+    index_closes: dict[str, Optional[float]],
+) -> dict:
+    """Compute relative strength of a stock vs an index.
+
+    Returns a dict with:
+    - rs: dict of date -> ratio (stock_close / index_close)
+    - rs_pct: dict of date -> % outperformance vs index (rebased to first common date)
+    - first_common: first date where both have values
+    - dates: list of common dates (sorted)
+    - base_rs: ratio at first common date
+    """
+    # Find common dates where both have values
+    common_dates = sorted(
+        d for d in stock_closes
+        if d in index_closes
+        and stock_closes[d] is not None
+        and index_closes[d] is not None
+    )
+
+    if not common_dates:
+        return {
+            "rs": {},
+            "rs_pct": {},
+            "first_common": None,
+            "dates": [],
+            "base_rs": None,
+        }
+
+    first_common = common_dates[0]
+    base_stock = stock_closes[first_common]
+    base_index = index_closes[first_common]
+
+    if base_index is None or base_index == 0:
+        return {
+            "rs": {d: None for d in common_dates},
+            "rs_pct": {d: None for d in common_dates},
+            "first_common": first_common,
+            "dates": common_dates,
+            "base_rs": None,
+        }
+
+    base_rs = float(base_stock) / float(base_index)
+
+    rs = {}
+    rs_pct = {}
+    for d in common_dates:
+        stock_val = stock_closes.get(d)
+        index_val = index_closes.get(d)
+        if stock_val is not None and index_val is not None and index_val != 0:
+            ratio = float(stock_val) / float(index_val)
+            rs[d] = ratio
+            # rs_pct = 100 * (stock/index) / (base_stock/base_index) - 100
+            rs_pct[d] = 100.0 * (float(stock_val) / float(index_val)) / base_rs - 100.0
+        else:
+            rs[d] = None
+            rs_pct[d] = None
+
+    return {
+        "rs": rs,
+        "rs_pct": rs_pct,
+        "first_common": first_common,
+        "dates": common_dates,
+        "base_rs": base_rs,
+    }
+
+
 def compare(
     closes_a: Sequence[Optional[float]],
     closes_b: Sequence[Optional[float]],
