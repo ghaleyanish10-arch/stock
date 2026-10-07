@@ -837,3 +837,95 @@ def upcoming_corporate_actions(
         "period": f"{today_iso} to {end_iso}",
         "upcoming": upcoming,
     }
+
+
+# ---------------------------------------------------------------------------
+# Nepal calendar (WP1)
+# ---------------------------------------------------------------------------
+
+from datetime import date as _date
+
+from app.config import settings
+from app.db.models import Holiday
+from app import timeutil
+
+
+@router.get("/calendar", summary="Nepal market calendar (WP1)")
+def nepal_calendar(
+    session: DbSession,
+    start: Optional[str] = Query(None, description="ISO start date (inclusive)"),
+    end: Optional[str] = Query(None, description="ISO end date (inclusive)"),
+) -> dict:
+    """Trading calendar for a date range: trading days, holidays and why.
+
+    Combines the weekend pattern (Sun-Thu), the admin-editable holiday table
+    and the archive's confirmed non-sessions. Holidays that cannot be sourced
+    are marked `unverified` — the UI shows that, it does not present them as
+    fact.
+    """
+    today = timeutil.npt_date()
+    try:
+        d_start = _date.fromisoformat(start) if start else today
+        d_end = _date.fromisoformat(end) if end else d_start + timedelta(days=30)
+    except ValueError:
+        raise HTTPException(422, "start/end must be ISO dates (YYYY-MM-DD)")
+    if d_start > d_end:
+        raise HTTPException(422, "start must be <= end")
+    if (d_end - d_start).days > 400:
+        raise HTTPException(422, "range limited to 400 days")
+
+    holiday_rows = session.execute(
+        select(Holiday).where(Holiday.date >= d_start.isoformat(), Holiday.date <= d_end.isoformat())
+    ).scalars().all()
+    by_date = {h.date: h for h in holiday_rows}
+
+    days = []
+    cur = d_start
+    while cur <= d_end:
+        iso = cur.isoformat()
+        h = by_date.get(iso)
+        trading = timeutil.is_trading_day(cur, session=session)
+        entry = {
+            "date": iso,
+            "is_trading_day": trading,
+            "weekday": cur.strftime("%A"),
+            "bs_date": timeutil.format_bs(cur),
+        }
+        if h is not None:
+            entry["holiday"] = {
+                "name": h.name,
+                "is_half_day": h.is_half_day,
+                "source": h.source,
+                "source_url": h.source_url,
+                "verification_status": h.verification_status,
+            }
+        elif not trading:
+            entry["reason"] = "weekend (Fri/Sat)" if timeutil.is_weekend_trading_pattern(cur) else "non-trading day"
+        days.append(entry)
+        cur += timedelta(days=1)
+
+    return {
+        "start": d_start.isoformat(),
+        "end": d_end.isoformat(),
+        "settlement_days": {
+            "value": settings.settlement_days,
+            "spec_status": "unverified",
+            "note": "Assumed T+2. Verify with your broker / SEBON.",
+        },
+        "days": days,
+        "counts": {
+            "total_days": len(days),
+            "trading_days": sum(1 for d in days if d["is_trading_day"]),
+            "holidays": len(holiday_rows),
+        },
+    }
+
+
+@router.get("/calendar/next-trading-day", summary="Next trading day after a date")
+def next_trading_day_endpoint(
+    after: str = Query(..., description="ISO date"),
+    session: DbSession = None,
+) -> dict:
+    d = _date.fromisoformat(after)
+    nxt = timeutil.next_trading_day(d, session=session)
+    return {"after": after, "next_trading_day": nxt.isoformat()}

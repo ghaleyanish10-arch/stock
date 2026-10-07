@@ -841,6 +841,40 @@ class FeeTaxRate(Base):
     )
 
 
+class Holiday(Base):
+    """Admin-editable holiday table (WP1).
+
+    Feeds the trading-day calendar: a date in this table is a non-trading day
+    for the whole market regardless of the Sunday-Thursday pattern. Sources:
+    NEPSE's published list (verified), CSV import, or manual entry — every row
+    carries `source` and `verification_status` so the UI can say who says so.
+
+    Provenance follows the project rule: a row whose provenance is unknown is
+    stored `unverified`, never silently treated as fact.
+    """
+
+    __tablename__ = "holidays"
+
+    # ISO date (YYYY-MM-DD) as the natural key: the same day cannot be two
+    # different holidays, and re-importing the same list is idempotent.
+    date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Optional half-day marker: NEPSE sometimes trades a shortened session.
+    is_half_day: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Where the row came from: "nepse_holiday_api", "csv_import", "manual"
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    # URL of the source document, when there is one.
+    source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # "verified" (official list confirmed) or "unverified"
+    verification_status: Mapped[str] = mapped_column(String(16), nullable=False, default="unverified")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_holidays_date", "date"),
+    )
+
+
 __all__ = [
     "Base",
     "User",
@@ -877,6 +911,7 @@ __all__ = [
     "NewsItem",
     "QuarterlyAnalysis",
     "CalculatorTemplate",
+    "Holiday",
     "iso_date",
     "utcnow",
 ]

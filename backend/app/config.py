@@ -61,6 +61,14 @@ class Settings:
         self.outbound_min_interval_ms = _get_int("NEPSE_OUTBOUND_MIN_INTERVAL_MS", 120)
         self.outbound_max_concurrency = _get_int("NEPSE_OUTBOUND_MAX_CONCURRENCY", 1)
 
+        # --- Nepal market calendar (WP1) --------------------------------
+        # UNVERIFIED: standard Nepali market convention is T+2 settlement,
+        # i.e. a buy must be placed N trading days before the book-close date
+        # to be eligible. Confirm with your broker / SEBON before relying on
+        # the last-day-to-buy helper. Surfaced in every API response that
+        # uses it (spec_status: unverified).
+        self.settlement_days = _get_int("NEPSE_SETTLEMENT_DAYS", 2)
+
         # --- Database ---------------------------------------------------
         # SQLite by default (zero setup). Any SQLAlchemy URL works, so
         # Postgres is a config change and not a code change.

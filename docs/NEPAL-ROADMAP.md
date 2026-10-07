@@ -131,8 +131,8 @@ Mapping each WP to reality:
 
 | WP | Item | Status | Tests added | Commit |
 |---|---|---|---|---|
-| 0 | Audit + roadmap | done | — | (this commit) |
-| 1 | NPT time + calendar foundation | not started | — | — |
+| 0 | Audit + roadmap | done | — | a04fc88 |
+| 1 | NPT time + calendar foundation | done | 41 (tests/test_timeutil.py) | (this commit) |
 | 2 | Index/sector archive + relative strength | not started | — | — |
 | 3 | Corporate actions + adjusted prices | not started | — | — |
 | 4 | Calendar page + last day to buy | not started | — | — |
@@ -161,6 +161,32 @@ can be presented as fact. Each ships as config with
 - FY 2083/84 CGT rates (7.5% long / 10% short) — sourced from IRD FAQ and a
   law-firm briefing, primary Finance Act 2083 gazette not accessible; already
   marked unverified in `fee_tax_rates` seed + `docs/data-sources.md`.
+- `NEPSE_SETTLEMENT_DAYS` (default 2, T+2 assumption) — marked unverified in
+  `app/config.py` and surfaced with `spec_status` in `/api/reference/calendar`;
+  drives WP4 last-day-to-buy and the WP6 backtest.
+
+### Dependencies added (WP1)
+
+- `nepali_datetime==1.0.8.5` (MIT) — Bikram Sambat ↔ AD conversion, replacing
+  a hand-rolled day-count table; round-trip tested 2020–2030 (0 failures;
+  earlier sweep verified 1945–2035). In `backend/requirements.txt`.
+- Also documented in requirements: `python-multipart==0.0.32` — required at
+  runtime by FastAPI for the `File(...)` endpoints (portfolio, fundamentals,
+  admin holidays CSV import). It was previously installed-but-unlisted.
+
+### Engineering notes (WP1)
+
+- pytest never awaits old-style `teardown_method` coroutines under
+  `asyncio_mode = auto` (warning: "coroutine was never awaited"). DB self-
+  cleaning tests must put cleanup in the async generator fixture's `finally`,
+  as `tests/test_timeutil.py::TestCalendarAPI` now does. Feature tests that
+  only close an `AsyncClient` in `_teardown` are unaffected but fragile.
+- Sunday IS a NEPSE trading day (Sun–Thu week ⇒ Python `weekday()` 6 = Sun is
+  in-session). All weekend fixtures use Fri/Sat. A hand example of the
+  non-trading anchor for `last_day_to_buy` must use a Saturday.
+- `last_day_to_buy` anchors at the book-close date when it is a trading day,
+  otherwise at the nearest strictly-prior trading day, then walks back N
+  sessions. N=0 on a Saturday book close therefore returns the prior Thursday.
 
 ## Needs the user
 

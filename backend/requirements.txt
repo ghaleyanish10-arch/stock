@@ -14,6 +14,10 @@ pydantic==2.13.5
 # NEPSE data source
 nepse-data-api==1.0.0.4
 
+# Nepal time: Bikram Sambat <-> AD calendar conversion (WP1)
+# MIT licence, version 1.0.8.5; replaces a hand-rolled day-count table.
+nepali_datetime==1.0.8.5
+
 # Storage
 SQLAlchemy==2.1.1
 aiosqlite==0.22.1
@@ -31,3 +35,7 @@ requests==2.34.2
 pytest==9.1.1
 pytest-asyncio==1.4.0
 httpx==0.28.1
+
+# Multipart form/file uploads — required by FastAPI for File(...) endpoints
+# (portfolio + fundamentals CSV import; admin holidays CSV import since WP1).
+python-multipart==0.0.32

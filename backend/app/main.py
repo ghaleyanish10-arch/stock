@@ -198,6 +198,9 @@ app.include_router(ai_routes.router)
 app.include_router(realtime_routes.router)
 app.include_router(fundamentals_routes.router)
 app.include_router(admin_routes.router)
+from app.admin import holidays as admin_holidays_routes  # noqa: E402  (WP1)
+
+app.include_router(admin_holidays_routes.router)
 
 
 @app.get("/", include_in_schema=False)
