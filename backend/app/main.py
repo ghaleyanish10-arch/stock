@@ -36,6 +36,7 @@ from app.auth import routes as auth_routes
 from app.config import settings
 from app.db.session import init_db
 from app.jobs.scheduler import job_loop
+from app.live_data.poller import start_live_poller, stop_live_poller
 from app.nepse.exceptions import NepseServiceError
 from app.nepse.registry import close_adapter, get_adapter, start_adapter
 from app.reference import routes as reference_routes
@@ -45,6 +46,7 @@ from app.alerts import routes as alerts_routes
 from app.calculator import routes as calculator_routes
 from app.news import routes as news_routes
 from app.admin import routes as admin_routes
+from app.live_data.middleware import DelayMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,7 @@ async def lifespan(_: FastAPI):
     await start_adapter()
     await service.start()
     await start_realtime_service()
+    await start_live_poller()
 
     # Reuses the shared adapter (and therefore the shared rate limiter) rather
     # than opening a second upstream session.
@@ -80,6 +83,7 @@ async def lifespan(_: FastAPI):
             await scheduler
         except asyncio.CancelledError:
             pass
+        await stop_live_poller()
         await stop_realtime_service()
         await service.close()
         await close_adapter()
@@ -179,6 +183,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Delay middleware for role-based data delay (WP-L2)
+app.add_middleware(DelayMiddleware)
 
 app.include_router(router)
 app.include_router(auth_routes.router)

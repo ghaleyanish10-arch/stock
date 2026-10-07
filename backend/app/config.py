@@ -83,6 +83,16 @@ class Settings:
         self.jwt_ttl_minutes = _get_int("APP_JWT_TTL_MINUTES", 60 * 24 * 7)
         self.debug = _get_bool("APP_DEBUG", True)
 
+        # --- Live data polling (WP-L1) --------------------------------------
+        # Interval (seconds) between live market data polls during trading hours.
+        self.live_poll_interval_seconds = _get_int("LIVE_POLL_INTERVAL_SECONDS", 30)
+        # Maximum age of snapshots in the ring buffer (seconds).
+        self.live_max_age_seconds = _get_int("LIVE_MAX_AGE_SECONDS", 1800)
+        # Public data delay (seconds). Default 60s for non-admin users.
+        self.public_data_delay_seconds = _get_int("PUBLIC_DATA_DELAY_SECONDS", 60)
+        # Admin data delay (seconds). Default 0 for real-time access.
+        self.admin_data_delay_seconds = _get_int("ADMIN_DATA_DELAY_SECONDS", 0)
+
         # --- Archive ----------------------------------------------------
         # NEPSE only serves ~227 sessions ending today, so the backfill
         # window is bounded upstream. `archive_floor` is the earliest date
