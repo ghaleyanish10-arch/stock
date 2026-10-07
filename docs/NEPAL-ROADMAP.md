@@ -133,7 +133,7 @@ Mapping each WP to reality:
 |---|---|---|---|---|
 | 0 | Audit + roadmap | done | — | a04fc88 |
 | 1 | NPT time + calendar foundation | done | 41 (tests/test_timeutil.py) | 591a456 |
-| 2 | Index/sector archive + relative strength | not started | — | — |
+| 2 | Index/sector archive + relative strength | done | 20 (tests/test_index_archive.py) + chart contract | (this commit) |
 | 3 | Corporate actions + adjusted prices | not started | — | — |
 | 4 | Calendar page + last day to buy | not started | — | — |
 | 5 | IPO/right tracker | not started | — | — |
@@ -187,6 +187,28 @@ can be presented as fact. Each ships as config with
 - `last_day_to_buy` anchors at the book-close date when it is a trading day,
   otherwise at the nearest strictly-prior trading day, then walks back N
   sessions. N=0 on a Saturday book close therefore returns the prior Thursday.
+
+### Engineering notes (WP2)
+
+- Upstream row keys verified live 2026-10-07 on `nots/index-history`:
+  `openIndex / highIndex / lowIndex / closingIndex / turnoverValue /
+  turnoverVolume / totalTransaction` plus period extras `absChange`,
+  `percentageChange`, `fiftyTwoWeekHigh/Low`. Sub-index names (13) are read
+  live from `nots/sub-indices` (`index` key); the main index is "NEPSE".
+- Stock-vs-index relative strength is an **inner join on business_date** with
+  no forward fill: a session missing on either side stays None on the chart.
+- Chart tokens `rs` (stock/index ratio) and `rs_pct` (\% outperformance vs the
+  index, rebased at the first common session) are stock-vs-INDEX only; the
+  disabled reason says exactly that when `compare` is a stock.
+- `trading_days_between` counts an **inclusive** range: first..last stored
+  both count, so gap math needs no +1. Its inputs are `date` objects - the
+  archive's ISO string columns must be parsed first.
+- The sub-index discovery call is one of the flakiest upstream endpoints; a
+  dry failure there logs and falls back to NEPSE + already-archived names
+  instead of aborting the backfill.
+- Frontend registry: `rs`/`rs_pct` added to indicators.ts + types.ts; the
+  compare-family input accepts a free-text index name because index names
+  contain spaces ("Banking SubIndex") and are not validate_symbol tokens.
 
 ## Needs the user
 

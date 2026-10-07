@@ -328,6 +328,9 @@ export const analytics = {
       range?: string;
       mode?: string;
       indicators?: string;
+      /** Second series for compare-family tokens: another symbol, or an
+       * index name (NEPSE or a sub-index, e.g. "Banking SubIndex"). */
+      compare?: string;
       /** Price basis: "as_traded" (default) or "adjusted". */
       basis?: string;
       /** Custom window start (YYYY-MM-DD); implies an ALL-style fetch. */

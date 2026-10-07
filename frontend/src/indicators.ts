@@ -130,6 +130,8 @@ export type IndicatorToken =
   | "ratio"
   | "spread"
   | "compare"
+  | "rs"
+  | "rs_pct"
   | "technical_ratings";
 
 /** Picker rows (== registry keys). Multi-series families have one id. */
@@ -166,7 +168,8 @@ export interface IndicatorDef {
   /** Set when the indicator cannot work in this market at all; the legend
    * shows this reason instead of a broken empty chip. */
   disabledByDesign?: string;
-  /** Needs a second symbol via `compare=`; the backend reports the exact
+  /** Needs a second series via `compare=` (another symbol, or an index:
+   * compare=NEPSE or a sub-index name); the backend reports the exact
    * reason and the legend surfaces it. */
   needsCompare?: boolean;
   /** Optional per-bar event key (±1 cross markers) drawn as arrows on the
@@ -631,6 +634,8 @@ export const INDICATORS: IndicatorDef[] = [
   { key: "ratio", token: "ratio", label: "Ratio", color: "#5d4037", pane: "flow", series: ["ratio"], needsCompare: true, desc: "This symbol's close divided by a second symbol's close (pass compare=SYM) - a relative-strength pair ratio; rising = outperforming." },
   { key: "spread", token: "spread", label: "Spread", color: "#6d4c41", pane: "flow", series: ["spread"], needsCompare: true, desc: "This symbol's close minus a second symbol's close (pass compare=SYM) - the absolute pair spread; converging = the gap is closing." },
   { key: "compare", token: "compare", label: "Compare (Rebased)", color: "#8d6e63", pane: "flow", series: ["compare"], needsCompare: true, desc: "Both symbols rebased to 100 at the window start (pass compare=SYM) - who moved more, on one comparable scale." },
+  { key: "rs", token: "rs", label: "Rel Strength vs index", color: "#00695c", pane: "flow", series: ["rs"], needsCompare: true, desc: "Stock close divided by an INDEX's close (pass compare=NEPSE or a sub-index, archived via /api/archive/backfill-indices) - inner-joined on sessions, no gaps filled; rising line = beating the index." },
+  { key: "rs_pct", token: "rs_pct", label: "Outperformance vs index %", color: "#004d40", pane: "flow", series: ["rs_pct"], needsCompare: true, desc: "% the stock gained/lost vs the index since their first common session (pass compare=NEPSE or a sub-index name): +10 = ten points richer relative to the index." },
   {
     key: "technical_ratings",
     token: "technical_ratings",

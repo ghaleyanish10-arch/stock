@@ -846,6 +846,8 @@ export type IndicatorKey =
   | "ratio"
   | "spread"
   | "compare"
+  | "rs"
+  | "rs_pct"
   | "tech_overall"
   | "tech_ma_rating"
   | "tech_osc_rating";

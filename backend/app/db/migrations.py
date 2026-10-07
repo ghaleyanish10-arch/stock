@@ -60,6 +60,9 @@ _ADD_STEPS: tuple[tuple[str, str, str, str], ...] = (
     ("add_holding_lots_table", "holding_lots", "id", "VARCHAR(36) PRIMARY KEY"),
     # Fee/Tax rates (B3)
     ("add_fee_tax_rates_table", "fee_tax_rates", "id", "VARCHAR(36) PRIMARY KEY"),
+    # Archived index points (WP2): NEPSE main + 13 sub-indices, one row per
+    # (index_name, business_date); the unique constraint carries the coupling.
+    ("add_index_points_table", "index_points", "id", "VARCHAR(36) PRIMARY KEY"),
 )
 
 

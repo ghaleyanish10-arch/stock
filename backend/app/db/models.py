@@ -875,6 +875,52 @@ class Holiday(Base):
     )
 
 
+class IndexPointRecord(Base):
+    """Archived daily value of one NEPSE index (WP2).
+
+    One row per (index_name, business_date). NEPSE publishes the main NEPSE
+    index (verified: `nots/index-history?index=NEPSE`) and the 13 sector
+    sub-indices through the same endpoint, so they share this table.
+
+    Provenance rules inherited from the archive: values NEPSE did not report
+    stay NULL — never zero, never forward-filled. `dedup_key` keeps the
+    upstream row id so a re-ingest can be told apart from a changed upstream
+    row.
+    """
+
+    __tablename__ = "index_points"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    index_name: Mapped[str] = mapped_column(String(64), nullable=False, primary_key=False)
+    # ISO date (YYYY-MM-DD), matching the rest of the archive.
+    business_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Upstream row id (`id` on nots/index-history rows); NULL when not reported.
+    dedup_key: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Session aggregates as reported. NULL = not reported.
+    turnover: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total_transactions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Period extremes NEPSE stamps on every history row, and changes vs the
+    # previous session (absChange / percentageChange) when reported.
+    high_52w: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_52w: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    abs_change: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pct_change: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # "nepse_index_history"; a row re-ingested through another path keeps its first source.
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="nepse_index_history")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("index_name", "business_date", name="uq_index_point"),
+        Index("ix_index_points_name_date", "index_name", "business_date"),
+    )
+
+
 __all__ = [
     "Base",
     "User",
@@ -912,6 +958,7 @@ __all__ = [
     "QuarterlyAnalysis",
     "CalculatorTemplate",
     "Holiday",
+    "IndexPointRecord",
     "iso_date",
     "utcnow",
 ]

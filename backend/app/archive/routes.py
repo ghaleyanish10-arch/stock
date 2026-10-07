@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.archive.service import ArchiveService, parse_date
+from app.archive.index_service import IndexArchiveService
 from app.auth.deps import AdminUser, DbSession
 from app.config import settings
 from app.db.session import SessionLocal
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/api/archive", tags=["archive"])
 # Shares the one process-wide NEPSE adapter, so archive requests do not open a
 # second upstream session with its own rate limiter.
 _archive = ArchiveService(get_adapter())
+_index_archive = IndexArchiveService(get_adapter())
 
 
 @router.get("/coverage", summary="How much history is archived")
@@ -286,3 +288,51 @@ def job_runs(
             for r in rows
         ],
     }
+
+
+class IndexBackfillRequest(BaseModel):
+    start: Optional[str] = Field(None, description="ISO date; default 2020-01-01")
+    end: Optional[str] = Field(None, description="ISO date; default today")
+    pause_ms: int = Field(250, ge=0, le=10000)
+    force: bool = Field(False, description="Re-read dates that are already stored")
+
+
+@router.post("/backfill-indices", summary="Backfill NEPSE + sub-index history (admin)")
+async def backfill_indices(
+    payload: IndexBackfillRequest,
+    session: DbSession,
+    admin: AdminUser,
+) -> dict[str, Any]:
+    """Ingest the NEPSE index and every live sub-index into `index_points`.
+
+    Unlike the stock backfill this runs synchronously on the request: one
+    upstream request per index (max ~14) completes in seconds. Dates already
+    stored are skipped unless `force`, so re-running is cheap. Requires admin
+    for the same reason as the stock backfill - it issues upstream requests.
+    """
+    for field in ("start", "end"):
+        value = getattr(payload, field)
+        if value:
+            try:
+                parse_date(value)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+    summary = await _index_archive.backfill(
+        session,
+        payload.start,
+        payload.end,
+        payload.pause_ms,
+        payload.force,
+    )
+    response: dict[str, Any] = {"ok": not summary.failures, **summary.as_dict()}
+    return response
+
+
+@router.get("/index-coverage", summary="How much index history is archived")
+def index_coverage(session: DbSession) -> dict[str, Any]:
+    """Per-index first/last stored session, closes stored and open gaps.
+
+    Gaps are reported, never filled: see the service for the honest-alignment
+    rule (an inner join of stock and index dates drives relative strength).
+    """
+    return _index_archive.coverage(session)

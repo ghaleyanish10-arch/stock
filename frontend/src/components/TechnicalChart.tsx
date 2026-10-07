@@ -1148,8 +1148,31 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
   const customDates = !!(fromDate || toDate);
   const effRange = customDates ? "ALL" : range;
 
+  // Compare-family tokens (ratio, spread, rs, ...) need a second series.
+  // The picker rows flag it via needsCompare; the value is a free-text field
+  // (an index name like "Banking SubIndex" is not a pickable symbol).
+  const needsCompare = selected.some((k) =>
+    INDICATORS.find((d) => d.key === k)?.needsCompare,
+  );
+  const [compareValue, setCompareValue] = useState("");
+  useEffect(() => {
+    if (!needsCompare) setCompareValue("");
+  }, [needsCompare]);
+
   const query = useQuery({
-    queryKey: ["chart", symbol, effRange, fromDate, toDate, basis, tf, weekStart, barLabelMode, selected],
+    queryKey: [
+      "chart",
+      symbol,
+      effRange,
+      fromDate,
+      toDate,
+      basis,
+      tf,
+      weekStart,
+      barLabelMode,
+      selected,
+      needsCompare ? compareValue : "",
+    ],
     queryFn: ({ signal }) =>
       analytics.chart(
         symbol,
@@ -1158,6 +1181,7 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           mode: "UNADJUSTED",
           basis,
           indicators: selectedToParam(selected),
+          compare: needsCompare && compareValue.trim() ? compareValue.trim() : undefined,
           start: fromDate || undefined,
           end: toDate || undefined,
           tf,
@@ -1358,6 +1382,17 @@ export function TechnicalChartCard({ symbol }: { symbol: string }) {
           >
             None
           </button>
+          {needsCompare && (
+            <input
+              className="picker-chip compare-input"
+              type="text"
+              placeholder="vs symbol or index (NEPSE)"
+              value={compareValue}
+              onChange={(e) => setCompareValue(e.target.value)}
+              aria-label="Comparison symbol or index"
+              title="Compare-family tokens need a partner: another symbol, or an index (NEPSE or a sub-index such as Banking SubIndex). Index history must be archived first (Archive page, admin)."
+            />
+          )}
           {INDICATORS.map((def) => {
             const on = selected.includes(def.key);
             return (

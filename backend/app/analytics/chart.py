@@ -472,14 +472,40 @@ async def chart(
 
     # Cross-symbol tokens need a second series aligned by date.
     compare_closes_by_date: dict[str, Optional[float]] = {}
+    compare_kind: Optional[str] = None
     if compare:
-        compare_sym = validate_symbol(compare)
-        c_rows = session.scalars(
-            select(DailyBar)
-            .where(DailyBar.symbol == compare_sym)
-            .order_by(DailyBar.business_date)
-        ).all()
-        compare_closes_by_date = {r.business_date: r.close for r in c_rows}
+        # An index (NEPSE or a sub-index) is served from `index_points`, not
+        # `daily_bars`; only dates with a stored close participate (inner
+        # join, no forward fill). Index names contain spaces / mixed case
+        # ("Banking SubIndex"), so they are not validate_symbol-able tokens:
+        # a compare value matching an archived index name routes there FIRST.
+        from app.db.models import IndexPointRecord
+
+        index_row = session.execute(
+            select(IndexPointRecord.index_name)
+            .where(IndexPointRecord.index_name == compare.strip())
+            .limit(1)
+        ).first()
+        if index_row is not None:
+            compare_kind = "index"
+            idx_rows = session.execute(
+                select(
+                    IndexPointRecord.business_date, IndexPointRecord.close
+                ).where(
+                    IndexPointRecord.index_name == compare.strip(),
+                    IndexPointRecord.close.is_not(None),
+                )
+            ).all()
+            compare_closes_by_date = {d: c for d, c in idx_rows}
+        else:
+            compare_kind = "stock"
+            compare_sym = validate_symbol(compare)
+            c_rows = session.scalars(
+                select(DailyBar)
+                .where(DailyBar.symbol == compare_sym)
+                .order_by(DailyBar.business_date)
+            ).all()
+            compare_closes_by_date = {r.business_date: r.close for r in c_rows}
 
     opens = [r.open for r in rows]
     highs = [r.high for r in rows]
@@ -1078,6 +1104,55 @@ async def chart(
             for pos, i in enumerate(compare_pairs_idx):
                 compare_aligned[i] = compare_vals[pos]
             out_indicators["compare"] = compare_aligned
+
+    # -- WP2 relative strength tokens ----------------------------------------
+    # `rs` plots the stock/index ratio; `rs_pct` plots % outperformance vs
+    # the index rebased to the first common session. Both are honest inner
+    # joins: a session missing on either side leaves the point None.
+    if "rs" in wanted or "rs_pct" in wanted:
+        if not compare or not compare_closes_by_date:
+            disabled["rs"] = disabled["rs_pct"] = (
+                "needs a comparison series: pass compare=NEPSE (or a sub-index "
+                "name) so the stock and the index can be aligned by date."
+            )
+        elif compare_kind != "index":
+            disabled["rs"] = disabled["rs_pct"] = (
+                "rs/rs_pct compare a stock with an index; got "
+                f"compare={compare} (a stock). Pass compare=NEPSE or a "
+                "sub-index name such as 'Banking SubIndex'."
+            )
+        else:
+            stock_closes = {
+                d: closes_w[i] if i < len(closes_w) else None
+                for i, d in enumerate(dates_w)
+            }
+            rs_helper = relative_strength(stock_closes, compare_closes_by_date)
+            rs_aligned: list[Optional[float]] = [None] * len(dates_w)
+            rs_pct_aligned: list[Optional[float]] = [None] * len(dates_w)
+            for i, d in enumerate(dates_w):
+                rs_aligned[i] = rs_helper["rs"].get(d)
+                rs_pct_aligned[i] = rs_helper["rs_pct"].get(d)
+            rs_meta = {
+                "index": compare,
+                "first_common": rs_helper["first_common"],
+                "common_dates": len(rs_helper["dates"]),
+                # The ratio on the first common date; drift is measured from it.
+                "base_rs": rs_helper.get("base_rs"),
+            }
+            if "rs" in wanted:
+                out_indicators["rs"] = rs_aligned
+            if "rs_pct" in wanted:
+                out_indicators["rs_pct"] = rs_pct_aligned
+
+    # Attach RS metadata when computed, else a disabled-reason block.
+    if "rs" in wanted or "rs_pct" in wanted:
+        if compare and compare_kind == "index":
+            out_meta["relative_strength"] = rs_meta
+        else:
+            out_meta["relative_strength"] = {
+                "disabled_reason": disabled.get("rs"),
+                "needs": "compare=NEPSE or a sub-index name, with index archive rows (POST /api/archive/backfill-indices).",
+            }
 
     # -- Batch B doc #53-#56 ----------------------------------------------------
     if "median_price" in wanted:
