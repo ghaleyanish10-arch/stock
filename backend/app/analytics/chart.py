@@ -1144,15 +1144,24 @@ async def chart(
             if "rs_pct" in wanted:
                 out_indicators["rs_pct"] = rs_pct_aligned
 
-    # Attach RS metadata when computed, else a disabled-reason block.
+    # Attach RS metadata when computed, else a disabled-reason block. It
+    # rides under `disabled.rs_meta`: when the index has no archived rows the
+    # rs series is honestly all-None (not "disabled"), and the meta explains
+    # how to fill the archive instead of pretending the token misfired.
     if "rs" in wanted or "rs_pct" in wanted:
-        if compare and compare_kind == "index":
-            out_meta["relative_strength"] = rs_meta
+        if compare and compare_kind == "index" and "rs_meta" in locals():
+            disabled.setdefault("rs_meta", rs_meta)
         else:
-            out_meta["relative_strength"] = {
-                "disabled_reason": disabled.get("rs"),
-                "needs": "compare=NEPSE or a sub-index name, with index archive rows (POST /api/archive/backfill-indices).",
-            }
+            disabled.setdefault(
+                "rs_meta",
+                {
+                    "disabled_reason": disabled.get("rs"),
+                    "needs": (
+                        "compare=NEPSE or a sub-index name, with index archive rows "
+                        "(POST /api/archive/backfill-indices)."
+                    ),
+                },
+            )
 
     # -- Batch B doc #53-#56 ----------------------------------------------------
     if "median_price" in wanted:
