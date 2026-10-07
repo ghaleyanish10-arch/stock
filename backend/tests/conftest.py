@@ -15,6 +15,10 @@ Two rules are enforced, not just configured:
   database from another module (SessionLocal), which a bare sqlite:///:memory:
   engine does not support (each connection gets its own empty database).
 
+Network guard: all outbound sockets are blocked except to localhost. This
+catches any test that accidentally hits the real NEPSE API. The FakeNepseAdapter
+in fakes.py is the only permitted NEPSE client in tests.
+
 Test data never leaves this directory unless the test itself opted out with
 an explicit engine of its own (the StaticPool in-memory suites do exactly
 that and are unaffected).
@@ -25,6 +29,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -32,6 +37,21 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 DEV_DB_RELATIVE = "data/app.db"
+
+# ---------------------------------------------------------------------------
+# Network guard: block all outbound connections except localhost.
+# Installed at import time so it catches even module-level network calls.
+# ---------------------------------------------------------------------------
+_original_socket = socket.socket
+
+class _GuardedSocket(socket.socket):
+    def connect(self, address):
+        host = address[0]
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise RuntimeError(f"Network call blocked to {host}:{address[1]}")
+        return super().connect(address)
+
+socket.socket = _GuardedSocket
 
 
 def _initial_test_url() -> str:  # pragma: no cover - guard logic

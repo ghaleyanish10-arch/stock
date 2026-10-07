@@ -47,6 +47,21 @@ fix). Working tree carries the user's own untracked scripts
 | Backend live | `/api/nepse/market` 200, index 2578.73 (+11.96, +0.46%) 2026-10-06 |
 | Upstream failure mapping | `/api/nepse/stocks/NABIL/history` (NEPSE graphdata upstream 500) → **HTTP 404** `NEPSE_DATA_NOT_FOUND` envelope, no raw 500. Index history 200. |
 
+### Post-audit fixes (2026-10-07)
+
+| Issue | Fix | Commit |
+|---|---|---|
+| Network guard for tests | Added `tests/conftest.py` socket guard blocking all non-localhost outbound connections; fixed `test_brokers_registry_only.py` to mock NEPSE adapter in lifespan | (pending) |
+| `nepali_datetime` installed | `pip install nepali_datetime==1.0.8.5` (MIT) for Bikram Sambat conversion; all 41 timeutil tests pass | (pending) |
+
+**Health after fixes:**
+
+| Check | Result |
+|---|---|
+| `pytest -q` (backend) | **857 passed, 8 skipped** (31s) |
+| `npx tsc -b` (frontend) | clean |
+| `npm run build` (frontend) | ✓ built in 4.91s |
+
 ### What already exists per work package
 
 The codebase is substantially further along than the Nepal Edge brief assumed.
@@ -104,7 +119,7 @@ Mapping each WP to reality:
   i18n layer (en + ne), BS dates beside AD dates, AI news summaries sourced
   from announcements with cache.
 - **WP10 (macro panel):** nothing exists (no macro/remittance/tola code).
-- **WP11 (mobile/low-data):** responsive shell exists (mobile drawer). 
+- **WP11 (mobile/low-data):** responsive shell exists (mobile drawer).
   **Missing:** PWA manifest + service worker, data-saver toggle, gzip
   middleware, payload size budgets, measured before/after numbers.
 - **WP12 (floorsheet):** investigation already done and documented:
@@ -197,7 +212,7 @@ can be presented as fact. Each ships as config with
   live from `nots/sub-indices` (`index` key); the main index is "NEPSE".
 - Stock-vs-index relative strength is an **inner join on business_date** with
   no forward fill: a session missing on either side stays None on the chart.
-- Chart tokens `rs` (stock/index ratio) and `rs_pct` (\% outperformance vs the
+- Chart tokens `rs` (stock/index ratio) and `rs_pct` (% outperformance vs the
   index, rebased at the first common session) are stock-vs-INDEX only; the
   disabled reason says exactly that when `compare` is a stock.
 - `trading_days_between` counts an **inclusive** range: first..last stored

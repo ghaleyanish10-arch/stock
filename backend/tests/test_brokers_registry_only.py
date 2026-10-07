@@ -9,8 +9,44 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import AsyncClient
+from httpx._transports.asgi import ASGITransport
 
 from app.main import app
+from app.nepse.registry import reset_adapter
+from app.nepse.service import NepseService
+from tests.fakes import FakeNepseAdapter
+
+
+@pytest.fixture(autouse=True)
+def mock_nepse_adapter():
+    """Replace the shared NEPSE adapter and service with fakes to prevent real network calls."""
+    reset_adapter()
+    fake = FakeNepseAdapter()
+    # Monkey-patch the get_adapter to return our fake
+    import app.nepse.registry as registry_module
+    original_get_adapter = registry_module.get_adapter
+    registry_module.get_adapter = lambda: fake
+    # Also patch get_adapter in realtime.service since it imports it at module level
+    import app.realtime.service as realtime_service_module
+    original_realtime_get_adapter = realtime_service_module.get_adapter
+    realtime_service_module.get_adapter = lambda: fake
+    # Also replace the module-level service in routes (used by main.py lifespan)
+    import app.api.routes as routes_module
+    original_service = routes_module.service
+    routes_module.service = NepseService(client=fake)
+    # Also patch main.service since main.py imports it at module level
+    import app.main as main_module
+    original_main_service = main_module.service
+    main_module.service = routes_module.service
+    try:
+        yield fake
+    finally:
+        registry_module.get_adapter = original_get_adapter
+        realtime_service_module.get_adapter = original_realtime_get_adapter
+        routes_module.service = original_service
+        main_module.service = original_main_service
+        reset_adapter()
 
 
 @pytest.fixture()
