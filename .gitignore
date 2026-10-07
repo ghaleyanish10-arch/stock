@@ -6,6 +6,7 @@ venv/
 
 # Environment / secrets
 .env
+.env.*
 
 # Tooling / caches
 .pytest_cache/
@@ -13,6 +14,11 @@ venv/
 
 # Local application data (SQLite archive - never publish market data dumps)
 data/
+*.db
+*.sqlite*
+
+# Backups
+backups/
 
 # Logs
 *.log
