@@ -133,7 +133,7 @@ Mapping each WP to reality:
 |---|---|---|---|---|
 | 0 | Audit + roadmap | done | — | a04fc88 |
 | 1 | NPT time + calendar foundation | done | 41 (tests/test_timeutil.py) | 591a456 |
-| 2 | Index/sector archive + relative strength | done | 20 (tests/test_index_archive.py) + chart contract | (this commit) |
+| 2 | Index/sector archive + relative strength | done | 20 (tests/test_index_archive.py) + chart contract | 66d19da |
 | 3 | Corporate actions + adjusted prices | not started | — | — |
 | 4 | Calendar page + last day to buy | not started | — | — |
 | 5 | IPO/right tracker | not started | — | — |
